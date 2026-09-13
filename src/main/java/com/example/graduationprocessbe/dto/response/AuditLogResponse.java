@@ -13,12 +13,14 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class UserResponse {
+public class AuditLogResponse {
     private String id;
-    private String email;
-    private String fullName;
-    private String status;
-    private DepartmentResponse department;
+    private String processInstanceId;
+    private UserResponse actor;
+    private String actionName;
+    private String stepName;
+    private String payload;
+    private LocalDateTime executionTime;
     private LocalDateTime createdDate;
     private LocalDateTime lastModifiedDate;
 }

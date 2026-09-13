@@ -13,12 +13,15 @@ import java.time.LocalDateTime;
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class UserResponse {
+public class ThesisResponse {
     private String id;
-    private String email;
-    private String fullName;
-    private String status;
-    private DepartmentResponse department;
+    private String title;
+    private String description;
+    private UserResponse student;
+    private UserResponse lecturer;
+    private String phaseId;
+    private String processInstanceId;
+    private String currentStatus;
     private LocalDateTime createdDate;
     private LocalDateTime lastModifiedDate;
 }

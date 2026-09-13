@@ -20,10 +20,6 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public UserResponse createUser(CreateUserRequest request) {
-        if (userRepository.existsByUsername(request.getUsername())) {
-            throw new ApplicationException(ResponseDetails.DATA_EXISTED);
-        }
-
         if (userRepository.existsByEmail(request.getEmail())) {
             throw new ApplicationException(ResponseDetails.DATA_EXISTED);
         }
