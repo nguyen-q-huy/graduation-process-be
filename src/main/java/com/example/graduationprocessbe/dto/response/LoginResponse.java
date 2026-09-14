@@ -6,19 +6,13 @@ import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 
-import java.time.LocalDateTime;
-
 @Getter
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
 @JsonInclude(JsonInclude.Include.NON_NULL)
-public class UserResponse {
-    private String id;
-    private String email;
-    private String fullName;
-    private String status;
-    private DepartmentResponse department;
-    private LocalDateTime createdDate;
-    private LocalDateTime lastModifiedDate;
+public class LoginResponse {
+    private String accessToken;
+    private String tokenType = "Bearer";
+    private UserResponse user;
 }
