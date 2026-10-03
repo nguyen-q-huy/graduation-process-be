@@ -13,15 +13,15 @@ import lombok.Setter;
 @NoArgsConstructor
 @AllArgsConstructor
 @Entity
-@Table(name = "user_roles")
-public class UserRole extends BaseEntity {
+@Table(name = "permissions")
+public class Permission extends BaseEntity {
 
-    @Column(name = "user_id", nullable = false, length = 36)
-    private String userId;
+    @Column(nullable = false, unique = true, length = 100)
+    private String code;
 
-    @Column(name = "role_id", nullable = false, length = 36)
-    private String roleId;
+    @Column(nullable = false, length = 150)
+    private String name;
 
-    @Column(name = "thesis_round_id", length = 36)
-    private String thesisRoundId;
+    @Column(length = 50)
+    private String module;
 }
