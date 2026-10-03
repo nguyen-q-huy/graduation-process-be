@@ -7,6 +7,8 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.time.LocalDateTime;
+import java.util.List;
+import java.util.Set;
 
 @Getter
 @Setter
@@ -15,8 +17,14 @@ import java.time.LocalDateTime;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public class UserResponse {
     private String id;
+    private String username;
     private String email;
     private String fullName;
+    private String role;
+    private List<String> roles;
+    private Set<String> permissions;
+    private String userType;
+    private String departmentName;
     private String status;
     private DepartmentResponse department;
     private LocalDateTime createdDate;

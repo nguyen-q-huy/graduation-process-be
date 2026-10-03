@@ -31,4 +31,8 @@ public class CreateUserRequest {
     private String status;
 
     private String departmentId;
+
+    private String userType;
+
+    private String roleId;
 }

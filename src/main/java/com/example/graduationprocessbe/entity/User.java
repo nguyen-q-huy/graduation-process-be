@@ -25,10 +25,21 @@ public class User extends BaseEntity {
     @Column(nullable = false, length = 100, name = "full_name")
     private String fullName;
 
+    // Compatibility for existing databases that still have users.username as NOT NULL.
+    @Column(name = "username")
+    private String username;
+
+    // Compatibility for existing databases that still have users.password as NOT NULL.
+    @Column(name = "password")
+    private String password;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "department_id")
     private Department department;
 
     @Column(length = 50)
     private String status;
+
+    @Column(name = "user_type", length = 50)
+    private String userType;
 }

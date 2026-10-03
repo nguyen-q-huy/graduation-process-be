@@ -11,11 +11,12 @@ import java.util.List;
 @Setter
 @NoArgsConstructor
 @AllArgsConstructor
-public class RoleResponse {
-    private String id;
-    private String roleCode;
-    private String roleName;
-    private Integer permissionCount;
-    private List<String> permissionCodes;
-    private List<String> permissionIds;
+public class PageResponse<T> {
+    private List<T> content;
+    private long totalElements;
+    private int page;
+    private int size;
+    private int totalPages;
+    private boolean first;
+    private boolean last;
 }
