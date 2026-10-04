@@ -6,6 +6,7 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.support.DefaultMessageSourceResolvable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -19,7 +20,20 @@ import java.util.stream.Collectors;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(AccessDeniedException.class)
+    public ResponseEntity<ApiResponseWrapper<String>> handleAccessDenied(Exception ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new ApiResponseWrapper<>(
+                "FAILURE", "FORBIDDEN", "Bạn không có quyền thực hiện thao tác này", null));
+    }
 
+    @ExceptionHandler(org.springframework.security.core.AuthenticationException.class)
+    public ResponseEntity<ApiResponseWrapper<String>> authenticationFailure(Exception ex) {
+        return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body(new ApiResponseWrapper<>("FAILURE","UNAUTHORIZED","Đăng nhập thất bại hoặc tài khoản đã bị khóa",null));
+    }
+    @ExceptionHandler(org.springframework.dao.DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponseWrapper<String>> invalidReference(Exception ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiResponseWrapper<>("FAILURE","DATA_CONFLICT","Dữ liệu bị trùng hoặc còn được tham chiếu",null));
+    }
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ApiResponseWrapper<String>> handleResourceNotFound(
             ResourceNotFoundException ex,

@@ -16,4 +16,7 @@ public class PermissionResponse {
     private String code;
     private String name;
     private String module;
+    private String menuCode;
+    private String action;
+    private Boolean enabled;
 }

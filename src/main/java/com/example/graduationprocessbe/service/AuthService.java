@@ -9,4 +9,5 @@ public interface AuthService {
     LoginResponse login(LoginRequest loginRequest);
 
     UserResponse register(CreateUserRequest createUserRequest);
+    UserResponse getCurrentUser(String userId);
 }

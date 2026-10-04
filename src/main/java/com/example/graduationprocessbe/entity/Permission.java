@@ -24,4 +24,13 @@ public class Permission extends BaseEntity {
 
     @Column(length = 50)
     private String module;
+
+    @Column(name = "menu_code", length = 100)
+    private String menuCode;
+
+    @Column(length = 30)
+    private String action;
+
+    @Column(nullable = false, columnDefinition = "boolean default true")
+    private Boolean enabled = true;
 }

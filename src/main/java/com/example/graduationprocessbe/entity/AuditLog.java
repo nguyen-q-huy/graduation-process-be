@@ -34,8 +34,9 @@ public class AuditLog extends BaseEntity {
     @Column(name = "step_name", length = 100)
     private String stepName;
 
+    @org.hibernate.annotations.JdbcTypeCode(org.hibernate.type.SqlTypes.JSON)
     @Column(columnDefinition = "JSON")
-    private String payload;
+    private java.util.Map<String,Object> payload;
 
     @Column(name = "execution_time")
     private LocalDateTime executionTime;

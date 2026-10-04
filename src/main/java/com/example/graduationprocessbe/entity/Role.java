@@ -21,4 +21,7 @@ public class Role extends BaseEntity {
 
     @Column(nullable = false, length = 100)
     private String roleName;
+
+    @Column(name="permissions_version")
+    private Long permissionsVersion = 0L;
 }
