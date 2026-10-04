@@ -12,4 +12,5 @@ import lombok.Setter;
 public class MemberResponse {
     private String userId;
     private String thesisId;
+    private UserResponse user;
 }
