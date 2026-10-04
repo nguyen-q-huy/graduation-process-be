@@ -2,14 +2,16 @@ package com.example.graduationprocessbe.repository;
 
 import com.example.graduationprocessbe.entity.User;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.JpaSpecificationExecutor;
 
 import java.util.Optional;
 
-public interface UserRepository extends JpaRepository<User, String>, JpaSpecificationExecutor<User> {
+public interface UserRepository extends JpaRepository<User, String> {
+    @Override
+    @org.springframework.data.jpa.repository.EntityGraph(attributePaths = "department")
+    java.util.List<User> findAll();
+    boolean existsByUsername(String username);
+    Optional<User> findByUsername(String username);
     boolean existsByEmail(String email);
-
-    boolean existsByEmailAndIdNot(String email, String id);
 
     Optional<User> findByEmail(String email);
 }

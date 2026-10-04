@@ -2,8 +2,6 @@ package com.example.graduationprocessbe.entity;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
-import jakarta.persistence.Id;
-import jakarta.persistence.IdClass;
 import jakarta.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Getter;
@@ -16,14 +14,14 @@ import lombok.Setter;
 @AllArgsConstructor
 @Entity
 @Table(name = "user_roles")
-@IdClass(UserRoleId.class)
-public class UserRole {
+public class UserRole extends BaseEntity {
 
-    @Id
-    @Column(name = "user_id")
+    @Column(name = "user_id", nullable = false, length = 36)
     private String userId;
 
-    @Id
-    @Column(name = "role_id")
+    @Column(name = "role_id", nullable = false, length = 36)
     private String roleId;
+
+    @Column(name = "thesis_round_id", length = 36)
+    private String thesisRoundId;
 }

@@ -1,95 +1,71 @@
 package com.example.graduationprocessbe.service.impl;
-
-import com.example.graduationprocessbe.dto.PageResponse;
 import com.example.graduationprocessbe.dto.request.CreateRoleRequest;
-import com.example.graduationprocessbe.dto.request.UpdateRoleRequest;
 import com.example.graduationprocessbe.dto.response.RoleResponse;
-import com.example.graduationprocessbe.entity.Role;
+import com.example.graduationprocessbe.entity.*;
 import com.example.graduationprocessbe.exception.ApplicationException;
-import com.example.graduationprocessbe.exception.ResourceNotFoundException;
-import com.example.graduationprocessbe.exception.ResponseDetails;
-import com.example.graduationprocessbe.mapper.RoleMapper;
-import com.example.graduationprocessbe.repository.RoleRepository;
-import com.example.graduationprocessbe.repository.UserRoleRepository;
-import com.example.graduationprocessbe.service.RoleService;
-import com.example.graduationprocessbe.util.PageUtil;
+import com.example.graduationprocessbe.repository.*;
+import com.example.graduationprocessbe.service.*;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import java.util.*;
+import java.util.stream.Collectors;
 
-import java.util.Set;
-
-@Service
-@RequiredArgsConstructor
+@Service @RequiredArgsConstructor @Transactional(readOnly=true)
 public class RoleServiceImpl implements RoleService {
-
-    private static final Set<String> SORT_FIELDS = Set.of("roleCode", "roleName", "createdDate");
-
-    private final RoleRepository roleRepository;
-    private final UserRoleRepository userRoleRepository;
-    private final RoleMapper roleMapper;
-
-    @Override
+    private final RoleRepository roles;
+    private final RolePermissionRepository grants;
+    private final RoleAllowedPermissionRepository allowed;
+    private final PermissionRepository permissions;
+    private final MenuRepository menus;
+    private final RbacAuditService audit;
+    public List<RoleResponse> getAllRoles() {
+        var catalogue=permissions.findAll().stream().filter(p -> Boolean.TRUE.equals(p.getEnabled()))
+            .collect(Collectors.toMap(Permission::getId,p -> p));
+        var allGrants=grants.findAll(); var allAllowed=allowed.findAll();
+        return roles.findAll().stream().sorted(Comparator.comparing(Role::getRoleCode)).map(role -> {
+            List<String> limits=allAllowed.stream().filter(a -> role.getId().equals(a.getRoleId()))
+                .map(RoleAllowedPermission::getPermissionId).filter(catalogue::containsKey).toList();
+            List<String> ids="ADMIN".equals(role.getRoleCode()) ? new ArrayList<>(catalogue.keySet())
+                : allGrants.stream().filter(g -> role.getId().equals(g.getRoleId())).map(RolePermission::getPermissionId)
+                    .filter(limits::contains).toList();
+            return new RoleResponse(role.getId(),role.getRoleCode(),role.getRoleName(),ids.size(),
+                ids.stream().map(id -> catalogue.get(id).getCode()).toList(),ids,
+                "ADMIN".equals(role.getRoleCode()) ? ids : limits,role.getPermissionsVersion());
+        }).toList();
+    }
+    public List<String> getRolePermissionIds(String roleId) {
+        return getAllRoles().stream().filter(r -> roleId.equals(r.getId())).findFirst()
+            .orElseThrow(() -> error("NOT_FOUND","Vai trò không tồn tại",HttpStatus.NOT_FOUND)).getPermissionIds();
+    }
+    public RoleResponse createRole(CreateRoleRequest request) { throw fixed(); }
+    public RoleResponse updateRole(String id,CreateRoleRequest request) { throw fixed(); }
+    public void deleteRole(String id) { throw fixed(); }
+    private ApplicationException fixed() { return error("FIXED_ROLES","Hệ thống sử dụng năm vai trò cố định",HttpStatus.BAD_REQUEST); }
     @Transactional
-    public RoleResponse create(CreateRoleRequest request) {
-        if (roleRepository.existsByRoleCode(request.getRoleCode())) {
-            throw new ApplicationException(ResponseDetails.DATA_EXISTED);
+    public void updateRolePermissions(String roleId,List<String> requested,long expectedVersion) {
+        Role role=roles.lockById(roleId).orElseThrow(() -> error("NOT_FOUND","Vai trò không tồn tại",HttpStatus.NOT_FOUND));
+        if ("ADMIN".equals(role.getRoleCode())) throw fixed();
+        if (role.getPermissionsVersion()!=expectedVersion)
+            throw error("STALE_PERMISSIONS","Phân quyền đã thay đổi. Tải lại dữ liệu trước khi lưu.",HttpStatus.CONFLICT);
+        List<String> ids=PermissionPolicy.normalize(requested,permissions.findAll(),menus.findAll());
+        Set<String> limits=allowed.findByRoleId(roleId).stream().map(RoleAllowedPermission::getPermissionId).collect(Collectors.toSet());
+        if (!limits.containsAll(ids)) throw error("ROLE_SCOPE","Quyền không thuộc phạm vi của vai trò này",HttpStatus.BAD_REQUEST);
+        List<String> before=grants.findByRoleId(roleId).stream().map(RolePermission::getPermissionId).toList();
+        var auth=SecurityContextHolder.getContext().getAuthentication();
+        if (auth!=null && auth.getAuthorities().stream().noneMatch(a -> "ROLE_ADMIN".equals(a.getAuthority()))) {
+            Set<String> own=auth.getAuthorities().stream().map(a -> a.getAuthority()).collect(Collectors.toSet());
+            Set<String> changed=new HashSet<>(before); changed.addAll(ids);
+            changed.removeIf(id -> before.contains(id) && ids.contains(id));
+            if (permissions.findAllById(changed).stream().anyMatch(p -> !own.contains(p.getCode())))
+                throw error("FORBIDDEN","Không được cấp hoặc thu hồi quyền ngoài phạm vi của bạn",HttpStatus.FORBIDDEN);
         }
-        Role role = new Role();
-        role.setRoleCode(request.getRoleCode());
-        role.setRoleName(request.getRoleName());
-        return roleMapper.toResponse(roleRepository.save(role));
+        grants.deleteByRoleId(roleId); grants.flush();
+        grants.saveAll(ids.stream().map(id -> { RolePermission g=new RolePermission();g.setRoleId(roleId);g.setPermissionId(id);return g; }).toList());
+        role.setPermissionsVersion(role.getPermissionsVersion()+1); roles.save(role);
+        audit.record("ROLE_PERMISSIONS_UPDATED",roleId,before,ids);
     }
-
-    @Override
-    @Transactional(readOnly = true)
-    public RoleResponse getById(String id) {
-        return roleMapper.toResponse(find(id));
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public PageResponse<RoleResponse> search(String keyword, int page, int size, String sortBy, String direction) {
-        Specification<Role> spec = (root, query, cb) -> cb.conjunction();
-        if (keyword != null && !keyword.isBlank()) {
-            String pattern = PageUtil.likePattern(keyword);
-            spec = spec.and((root, query, cb) -> cb.or(
-                    cb.like(cb.lower(root.get("roleCode")), pattern, '\\'),
-                    cb.like(cb.lower(root.get("roleName")), pattern, '\\')));
-        }
-        Page<Role> result = roleRepository.findAll(spec,
-                PageUtil.of(page, size, sortBy, direction, SORT_FIELDS, "createdDate"));
-        return PageResponse.from(result, roleMapper::toResponse);
-    }
-
-    @Override
-    @Transactional
-    public RoleResponse update(String id, UpdateRoleRequest request) {
-        Role role = find(id);
-        if (request.getRoleCode() != null && !request.getRoleCode().equals(role.getRoleCode())) {
-            if (roleRepository.existsByRoleCode(request.getRoleCode())) {
-                throw new ApplicationException(ResponseDetails.DATA_EXISTED);
-            }
-            role.setRoleCode(request.getRoleCode());
-        }
-        if (request.getRoleName() != null) {
-            role.setRoleName(request.getRoleName());
-        }
-        return roleMapper.toResponse(roleRepository.save(role));
-    }
-
-    @Override
-    @Transactional
-    public void delete(String id) {
-        Role role = find(id);
-        userRoleRepository.deleteByRoleId(id);
-        roleRepository.delete(role);
-    }
-
-    private Role find(String id) {
-        return roleRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Role not found: " + id));
-    }
+    private ApplicationException error(String code,String text,HttpStatus status) { return new ApplicationException(code,text,status); }
 }

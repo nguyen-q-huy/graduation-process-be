@@ -19,6 +19,15 @@ import lombok.Setter;
 @Table(name = "users")
 public class User extends BaseEntity {
 
+    // Nullable in ORM metadata only: the versioned migration fills existing rows
+    // before enforcing NOT NULL in PostgreSQL.
+    @Column(length = 50)
+    private String username;
+
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @Column(name = "password_hash")
+    private String passwordHash;
+
     @Column(nullable = false, unique = true, length = 120)
     private String email;
 
@@ -30,5 +39,8 @@ public class User extends BaseEntity {
     private Department department;
 
     @Column(length = 50)
-    private String status;
+    private String status = "ACTIVE";
+
+    @Column(name = "user_type", length = 50)
+    private String userType = "STUDENT";
 }

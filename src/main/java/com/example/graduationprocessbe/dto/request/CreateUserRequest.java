@@ -31,4 +31,9 @@ public class CreateUserRequest {
     private String status;
 
     private String departmentId;
+
+    @jakarta.validation.constraints.Pattern(regexp="ADMIN|LECTURER|STUDENT")
+    private String userType;
+
+    private String roleId;
 }

@@ -1,20 +1,22 @@
 package com.example.graduationprocessbe.controller;
 
 import com.example.graduationprocessbe.dto.ApiResponseWrapper;
-import com.example.graduationprocessbe.dto.PageResponse;
+import com.example.graduationprocessbe.dto.request.AssignRoleRequest;
 import com.example.graduationprocessbe.dto.request.CreateUserRequest;
-import com.example.graduationprocessbe.dto.request.UpdateUserRequest;
-import com.example.graduationprocessbe.dto.response.RoleResponse;
+import com.example.graduationprocessbe.dto.response.PageResponse;
 import com.example.graduationprocessbe.dto.response.UserResponse;
+import com.example.graduationprocessbe.exception.ResponseDetails;
+import com.example.graduationprocessbe.service.RbacSetupService;
 import com.example.graduationprocessbe.service.UserService;
+import com.example.graduationprocessbe.util.PaginationUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -22,69 +24,80 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
 
-import static com.example.graduationprocessbe.util.ApiResponses.ok;
-
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
 public class UserController {
 
     private final UserService userService;
+    private final RbacSetupService rbacSetupService;
+
+    @GetMapping
+    @PreAuthorize("hasAuthority('VIEW_USERS')")
+    public ResponseEntity<ApiResponseWrapper<?>> getAllUsers(
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) String userType) {
+        List<UserResponse> users = userService.getAllUsers();
+        String keyword = PaginationUtils.normalize(search);
+        String type = PaginationUtils.normalize(userType);
+
+        List<UserResponse> filtered = users.stream()
+                .filter(user -> keyword.isBlank()
+                        || PaginationUtils.normalize(user.getFullName()).contains(keyword)
+                        || PaginationUtils.normalize(user.getEmail()).contains(keyword)
+                        || PaginationUtils.normalize(user.getUsername()).contains(keyword))
+                .filter(user -> type.isBlank()
+                        || "all".equals(type)
+                        || PaginationUtils.normalize(user.getUserType()).equals(type))
+                .toList();
+
+        Object data = page == null && size == null
+                ? filtered
+                : PaginationUtils.page(filtered, page, size);
+
+        return ResponseEntity
+                .status(ResponseDetails.API_SUCCESSFULLY.getHttpStatus())
+                .body(new ApiResponseWrapper<>(ResponseDetails.API_SUCCESSFULLY, data));
+    }
 
     @PostMapping
+    @PreAuthorize("hasAuthority('VIEW_USERS') and hasAuthority('USERS_CREATE') and (#request.roleId == null or #request.roleId == '' or hasAuthority('USERS_ASSIGN_ROLE'))")
     public ResponseEntity<ApiResponseWrapper<UserResponse>> createUser(@RequestBody @Valid CreateUserRequest request) {
-        return ok(userService.createUser(request));
+        return ResponseEntity
+                .status(ResponseDetails.API_SUCCESSFULLY.getHttpStatus())
+                .body(new ApiResponseWrapper<>(
+                        ResponseDetails.API_SUCCESSFULLY,
+                        userService.createUser(request)));
     }
 
-    /** GET /api/users?keyword=&status=&departmentId=&page=0&size=10&sortBy=createdDate&direction=desc */
-    @GetMapping
-    public ResponseEntity<ApiResponseWrapper<PageResponse<UserResponse>>> search(
-            @RequestParam(required = false) String keyword,
-            @RequestParam(required = false) String status,
-            @RequestParam(required = false) String departmentId,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "10") int size,
-            @RequestParam(required = false) String sortBy,
-            @RequestParam(defaultValue = "desc") String direction) {
-        return ok(userService.search(keyword, status, departmentId, page, size, sortBy, direction));
+    @org.springframework.web.bind.annotation.PutMapping("/{userId}")
+    @PreAuthorize("hasAuthority('VIEW_USERS') and hasAuthority('USERS_UPDATE')")
+    public ApiResponseWrapper<UserResponse> updateUser(@PathVariable String userId,
+        @Valid @RequestBody com.example.graduationprocessbe.dto.request.UpdateUserRequest request) {
+        return new ApiResponseWrapper<>(ResponseDetails.API_SUCCESSFULLY,userService.updateUser(userId,request));
     }
 
-    @GetMapping("/me")
-    public ResponseEntity<ApiResponseWrapper<UserResponse>> me() {
-        return ok(userService.getCurrentUser());
+    @PostMapping("/{userId}/roles")
+    @PreAuthorize("hasAuthority('VIEW_USERS') and hasAuthority('USERS_ASSIGN_ROLE')")
+    public ResponseEntity<ApiResponseWrapper<Void>> assignRoleToUser(
+            @PathVariable String userId,
+            @RequestBody @Valid AssignRoleRequest request) {
+        rbacSetupService.addMember(userId, request.getRoleId(), request.getThesisRoundId());
+        return ResponseEntity
+                .status(ResponseDetails.API_SUCCESSFULLY.getHttpStatus())
+                .body(new ApiResponseWrapper<>(ResponseDetails.API_SUCCESSFULLY, null));
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<ApiResponseWrapper<UserResponse>> getById(@PathVariable String id) {
-        return ok(userService.getById(id));
-    }
-
-    @PutMapping("/{id}")
-    public ResponseEntity<ApiResponseWrapper<UserResponse>> update(
-            @PathVariable String id, @RequestBody @Valid UpdateUserRequest request) {
-        return ok(userService.update(id, request));
-    }
-
-    @DeleteMapping("/{id}")
-    public ResponseEntity<ApiResponseWrapper<Void>> delete(@PathVariable String id) {
-        userService.delete(id);
-        return ok(null);
-    }
-
-    @GetMapping("/{id}/roles")
-    public ResponseEntity<ApiResponseWrapper<List<RoleResponse>>> getRoles(@PathVariable String id) {
-        return ok(userService.getRoles(id));
-    }
-
-    @PostMapping("/{id}/roles/{roleId}")
-    public ResponseEntity<ApiResponseWrapper<List<RoleResponse>>> assignRole(
-            @PathVariable String id, @PathVariable String roleId) {
-        return ok(userService.assignRole(id, roleId));
-    }
-
-    @DeleteMapping("/{id}/roles/{roleId}")
-    public ResponseEntity<ApiResponseWrapper<List<RoleResponse>>> removeRole(
-            @PathVariable String id, @PathVariable String roleId) {
-        return ok(userService.removeRole(id, roleId));
+    @DeleteMapping("/{userId}/roles/{roleId}")
+    @PreAuthorize("hasAuthority('VIEW_USERS') and hasAuthority('USERS_ASSIGN_ROLE')")
+    public ResponseEntity<ApiResponseWrapper<Void>> removeRoleFromUser(
+            @PathVariable String userId,
+            @PathVariable String roleId) {
+        rbacSetupService.removeMembers(userId, roleId);
+        return ResponseEntity
+                .status(ResponseDetails.API_SUCCESSFULLY.getHttpStatus())
+                .body(new ApiResponseWrapper<>(ResponseDetails.API_SUCCESSFULLY, null));
     }
 }

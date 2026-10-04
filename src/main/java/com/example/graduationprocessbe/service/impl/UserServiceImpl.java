@@ -1,170 +1,94 @@
 package com.example.graduationprocessbe.service.impl;
-
-import com.example.graduationprocessbe.dto.PageResponse;
-import com.example.graduationprocessbe.dto.request.CreateUserRequest;
-import com.example.graduationprocessbe.dto.request.UpdateUserRequest;
-import com.example.graduationprocessbe.dto.response.RoleResponse;
-import com.example.graduationprocessbe.dto.response.UserResponse;
-import com.example.graduationprocessbe.entity.User;
-import com.example.graduationprocessbe.entity.UserRole;
-import com.example.graduationprocessbe.entity.UserRoleId;
+import com.example.graduationprocessbe.dto.request.*;
+import com.example.graduationprocessbe.dto.response.*;
+import com.example.graduationprocessbe.entity.*;
 import com.example.graduationprocessbe.exception.ApplicationException;
-import com.example.graduationprocessbe.exception.ResourceNotFoundException;
-import com.example.graduationprocessbe.exception.ResponseDetails;
-import com.example.graduationprocessbe.mapper.RoleMapper;
 import com.example.graduationprocessbe.mapper.UserMapper;
-import com.example.graduationprocessbe.repository.DepartmentRepository;
-import com.example.graduationprocessbe.repository.MemberRepository;
-import com.example.graduationprocessbe.repository.RoleRepository;
-import com.example.graduationprocessbe.repository.SecurityRepository;
-import com.example.graduationprocessbe.repository.UserRepository;
-import com.example.graduationprocessbe.repository.UserRoleRepository;
-import com.example.graduationprocessbe.service.CurrentUserService;
-import com.example.graduationprocessbe.service.UserService;
-import com.example.graduationprocessbe.util.PageUtil;
+import com.example.graduationprocessbe.repository.*;
+import com.example.graduationprocessbe.service.*;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
-import org.springframework.data.jpa.domain.Specification;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
-
-import java.util.List;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 public class UserServiceImpl implements UserService {
-
-    private static final Set<String> SORT_FIELDS = Set.of("email", "fullName", "status", "createdDate");
-
-    private final UserRepository userRepository;
-    private final UserMapper userMapper;
-    private final DepartmentRepository departmentRepository;
-    private final RoleRepository roleRepository;
-    private final RoleMapper roleMapper;
-    private final UserRoleRepository userRoleRepository;
-    private final MemberRepository memberRepository;
-    private final SecurityRepository securityRepository;
-    private final CurrentUserService currentUserService;
+    private final UserRepository users;
+    private final UserRoleRepository memberships;
+    private final RoleRepository roles;
+    private final DepartmentRepository departments;
+    private final PasswordEncoder passwords;
+    private final UserMapper mapper;
+    private final RoleMembershipService membershipService;
+    private final RbacAuditService audit;
 
     @Override
+    @Transactional(readOnly = true)
+    public List<UserResponse> getAllUsers() {
+        // Load relationships once; avoid queries for each account in the setup snapshot.
+        var roleMap = roles.findAll().stream().collect(Collectors.toMap(Role::getId,Role::getRoleCode));
+        var byUser = memberships.findAll().stream().collect(Collectors.groupingBy(UserRole::getUserId));
+        return users.findAll().stream().map(user -> {
+            UserResponse response = mapper.toResponse(user);
+            response.setUsername(user.getUsername());
+            List<String> assigned = byUser.getOrDefault(user.getId(),List.of()).stream()
+                .map(m -> roleMap.get(m.getRoleId())).filter(Objects::nonNull).distinct().sorted().toList();
+            response.setRoles(assigned); response.setRole(EffectivePermissionService.primaryRole(assigned));
+            if (user.getDepartment()!=null) response.setDepartmentName(user.getDepartment().getDeptName());
+            return response;
+        }).toList();
+    }
+    @Override
+    @Transactional
     public UserResponse createUser(CreateUserRequest request) {
-        if (userRepository.existsByEmail(request.getEmail())) {
-            throw new ApplicationException(ResponseDetails.DATA_EXISTED);
-        }
-        User user = userMapper.toEntity(request);
-        return userMapper.toResponse(userRepository.save(user));
+        if (users.existsByEmail(request.getEmail()) || users.existsByUsername(request.getUsername().trim()))
+            throw bad("Tên đăng nhập hoặc email đã tồn tại");
+        User user = mapper.toEntity(request);
+        user.setStatus("ACTIVE");
+        user.setUserType(request.getUserType()==null ? "STUDENT" : request.getUserType().trim().toUpperCase(Locale.ROOT));
+        validateType(user.getUserType());
+        if (request.getDepartmentId()!=null && !request.getDepartmentId().isBlank())
+            user.setDepartment(departments.findById(request.getDepartmentId()).orElseThrow(() -> bad("Khoa không tồn tại")));
+        user.setUsername(request.getUsername().trim());
+        user.setPasswordHash(passwords.encode(request.getPassword()));
+        users.save(user);
+        membershipService.add(user.getId(),user.getUserType(),null);
+        if (request.getRoleId()!=null && !request.getRoleId().isBlank()) membershipService.add(user.getId(),request.getRoleId(),null);
+        audit.record("USER_CREATED",user.getId(),Map.of(),Map.of("username",user.getUsername(),"type",user.getUserType()));
+        return response(user,user.getUsername());
     }
-
-    @Override
-    @Transactional(readOnly = true)
-    public UserResponse getById(String id) {
-        return userMapper.toResponse(find(id));
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public UserResponse getCurrentUser() {
-        User user = currentUserService.getCurrentUser()
-                .orElseThrow(() -> new ResourceNotFoundException("Current user not found"));
-        return userMapper.toResponse(user);
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public PageResponse<UserResponse> search(String keyword, String status, String departmentId,
-                                             int page, int size, String sortBy, String direction) {
-        Specification<User> spec = (root, query, cb) -> cb.conjunction();
-        if (keyword != null && !keyword.isBlank()) {
-            String pattern = PageUtil.likePattern(keyword);
-            spec = spec.and((root, query, cb) -> cb.or(
-                    cb.like(cb.lower(root.get("email")), pattern, '\\'),
-                    cb.like(cb.lower(root.get("fullName")), pattern, '\\')));
-        }
-        if (status != null && !status.isBlank()) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("status"), status));
-        }
-        if (departmentId != null && !departmentId.isBlank()) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("department").get("id"), departmentId));
-        }
-        Page<User> result = userRepository.findAll(spec,
-                PageUtil.of(page, size, sortBy, direction, SORT_FIELDS, "createdDate"));
-        return PageResponse.from(result, userMapper::toResponse);
-    }
-
     @Override
     @Transactional
-    public UserResponse update(String id, UpdateUserRequest request) {
-        User user = find(id);
-        if (request.getEmail() != null && !request.getEmail().equals(user.getEmail())) {
-            if (userRepository.existsByEmailAndIdNot(request.getEmail(), id)) {
-                throw new ApplicationException(ResponseDetails.DATA_EXISTED);
-            }
-            user.setEmail(request.getEmail());
-        }
-        if (request.getFullName() != null) {
-            user.setFullName(request.getFullName());
-        }
-        if (request.getStatus() != null) {
-            user.setStatus(request.getStatus());
-        }
-        if (request.getDepartmentId() != null) {
-            user.setDepartment(departmentRepository.findById(request.getDepartmentId())
-                    .orElseThrow(() -> new ResourceNotFoundException(
-                            "Department not found: " + request.getDepartmentId())));
-        }
-        return userMapper.toResponse(userRepository.save(user));
+    public UserResponse updateUser(String id,UpdateUserRequest request) {
+        // All changes that can remove an active admin serialize on the ADMIN row.
+        Role admin = roles.findByRoleCode("ADMIN").orElseThrow(); roles.lockById(admin.getId()).orElseThrow();
+        User user = users.findById(id).orElseThrow(() -> bad("Tài khoản không tồn tại"));
+        if (!request.getEmail().equals(user.getEmail()) && users.existsByEmail(request.getEmail())) throw bad("Email đã tồn tại");
+        boolean isAdmin = memberships.findByUserId(id).stream().anyMatch(m -> admin.getId().equals(m.getRoleId()) && m.getThesisRoundId()==null);
+        if (isAdmin && "ACTIVE".equals(user.getStatus()) && !"ACTIVE".equals(request.getStatus()) && memberships.countActiveGlobalAdmins()<=1)
+            throw bad("Không được khóa ADMIN hoạt động cuối cùng");
+        validateType(request.getUserType());
+        if (!user.getUserType().equals(request.getUserType())) throw bad("Không đổi loại hồ sơ của tài khoản đã tạo");
+        boolean lecturerRole = memberships.findByUserId(id).stream().anyMatch(m -> roles.findById(m.getRoleId())
+            .map(r -> Set.of("LECTURER","FACULTY_STAFF","COMMITTEE").contains(r.getRoleCode())).orElse(false));
+        if (lecturerRole && !"LECTURER".equals(request.getUserType())) throw bad("Bỏ vai trò giảng viên/Khoa/Hội đồng trước khi đổi loại tài khoản");
+        var before=Map.of("name",user.getFullName(),"email",user.getEmail(),"status",user.getStatus(),"type",user.getUserType());
+        user.setFullName(request.getFullName()); user.setEmail(request.getEmail()); user.setStatus(request.getStatus()); user.setUserType(request.getUserType());
+        users.save(user);
+        audit.record("USER_UPDATED",id,before,Map.of("name",user.getFullName(),"email",user.getEmail(),"status",user.getStatus(),"type",user.getUserType()));
+        return response(user,user.getUsername());
     }
-
-    @Override
-    @Transactional
-    public void delete(String id) {
-        User user = find(id);
-        memberRepository.deleteByUserId(id);
-        userRoleRepository.deleteByUserId(id);
-        securityRepository.findById(id).ifPresent(securityRepository::delete);
-        userRepository.delete(user);
-        userRepository.flush();
+    @Override public void assignRoleToUser(String userId,String roleId,String roundId) { membershipService.add(userId,roleId,roundId); }
+    @Override public void removeRoleFromUser(String userId,String roleId) { membershipService.removeAll(userId,roleId); }
+    private UserResponse response(User user,String username) {
+        UserResponse response=mapper.toResponse(user); response.setUsername(username);
+        List<String> assigned=memberships.findRoleCodesByUserIdAndRoundId(user.getId(),null);
+        response.setRoles(assigned); response.setRole(EffectivePermissionService.primaryRole(assigned)); return response;
     }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<RoleResponse> getRoles(String userId) {
-        find(userId);
-        return rolesOf(userId);
-    }
-
-    @Override
-    @Transactional
-    public List<RoleResponse> assignRole(String userId, String roleId) {
-        find(userId);
-        roleRepository.findById(roleId)
-                .orElseThrow(() -> new ResourceNotFoundException("Role not found: " + roleId));
-        if (userRoleRepository.existsById(new UserRoleId(userId, roleId))) {
-            throw new ApplicationException(ResponseDetails.DATA_EXISTED);
-        }
-        userRoleRepository.save(new UserRole(userId, roleId));
-        return rolesOf(userId);
-    }
-
-    @Override
-    @Transactional
-    public List<RoleResponse> removeRole(String userId, String roleId) {
-        UserRoleId key = new UserRoleId(userId, roleId);
-        if (!userRoleRepository.existsById(key)) {
-            throw new ResourceNotFoundException("User " + userId + " does not have role " + roleId);
-        }
-        userRoleRepository.deleteById(key);
-        return rolesOf(userId);
-    }
-
-    private List<RoleResponse> rolesOf(String userId) {
-        List<String> roleIds = userRoleRepository.findByUserId(userId).stream().map(UserRole::getRoleId).toList();
-        return roleRepository.findAllById(roleIds).stream().map(roleMapper::toResponse).toList();
-    }
-
-    private User find(String id) {
-        return userRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + id));
-    }
+    private void validateType(String type) { if (!Set.of("ADMIN","LECTURER","STUDENT").contains(type)) throw bad("Loại tài khoản không hợp lệ"); }
+    private ApplicationException bad(String text) { return new ApplicationException("INVALID_USER",text,HttpStatus.BAD_REQUEST); }
 }
