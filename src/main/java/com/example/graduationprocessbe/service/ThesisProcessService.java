@@ -9,8 +9,12 @@ import java.util.Map;
 
 public interface ThesisProcessService {
 
-    /** Tạo Thesis và start process graduationProcess. */
+    /** Đăng ký đề tài trong mốc đăng ký, chờ GVHD xác nhận. */
     ThesisResponse createThesis(CreateThesisRequest request);
+
+    ThesisResponse submitProposal(String thesisId, String content);
+    ThesisResponse confirmGuidance(String thesisId, boolean approved, String comment);
+    ThesisResponse resubmitRegistration(String thesisId, String title, String lecturerId);
 
     ThesisResponse getThesis(String thesisId);
 

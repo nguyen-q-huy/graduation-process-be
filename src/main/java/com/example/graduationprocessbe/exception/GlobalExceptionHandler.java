@@ -20,6 +20,11 @@ import java.util.stream.Collectors;
 @Slf4j
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ApiResponseWrapper<String>> invalidWorkflowInput(IllegalArgumentException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(new ApiResponseWrapper<>(
+                "FAILURE", "INVALID_INPUT", ex.getMessage(), null));
+    }
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<ApiResponseWrapper<String>> handleAccessDenied(Exception ex) {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(new ApiResponseWrapper<>(

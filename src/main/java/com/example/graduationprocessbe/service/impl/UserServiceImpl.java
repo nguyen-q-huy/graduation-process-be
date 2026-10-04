@@ -48,6 +48,7 @@ public class UserServiceImpl implements UserService {
         if (users.existsByEmail(request.getEmail()) || users.existsByUsername(request.getUsername().trim()))
             throw bad("Tên đăng nhập hoặc email đã tồn tại");
         User user = mapper.toEntity(request);
+        if (request.getPhone()!=null) user.setPhone(request.getPhone().isBlank()?null:request.getPhone().trim());
         user.setStatus("ACTIVE");
         user.setUserType(request.getUserType()==null ? "STUDENT" : request.getUserType().trim().toUpperCase(Locale.ROOT));
         validateType(user.getUserType());
@@ -76,10 +77,17 @@ public class UserServiceImpl implements UserService {
         boolean lecturerRole = memberships.findByUserId(id).stream().anyMatch(m -> roles.findById(m.getRoleId())
             .map(r -> Set.of("LECTURER","FACULTY_STAFF","COMMITTEE").contains(r.getRoleCode())).orElse(false));
         if (lecturerRole && !"LECTURER".equals(request.getUserType())) throw bad("Bỏ vai trò giảng viên/Khoa/Hội đồng trước khi đổi loại tài khoản");
-        var before=Map.of("name",user.getFullName(),"email",user.getEmail(),"status",user.getStatus(),"type",user.getUserType());
-        user.setFullName(request.getFullName()); user.setEmail(request.getEmail()); user.setStatus(request.getStatus()); user.setUserType(request.getUserType());
+        Map<String,Object> before=new LinkedHashMap<>();
+        before.put("name",user.getFullName()); before.put("email",user.getEmail()); before.put("phone",user.getPhone());
+        before.put("status",user.getStatus()); before.put("type",user.getUserType());
+        user.setFullName(request.getFullName()); user.setEmail(request.getEmail());
+        if (request.getPhone()!=null) user.setPhone(request.getPhone().isBlank()?null:request.getPhone().trim());
+        user.setStatus(request.getStatus()); user.setUserType(request.getUserType());
         users.save(user);
-        audit.record("USER_UPDATED",id,before,Map.of("name",user.getFullName(),"email",user.getEmail(),"status",user.getStatus(),"type",user.getUserType()));
+        Map<String,Object> after=new LinkedHashMap<>();
+        after.put("name",user.getFullName()); after.put("email",user.getEmail()); after.put("phone",user.getPhone());
+        after.put("status",user.getStatus()); after.put("type",user.getUserType());
+        audit.record("USER_UPDATED",id,before,after);
         return response(user,user.getUsername());
     }
     @Override public void assignRoleToUser(String userId,String roleId,String roundId) { membershipService.add(userId,roleId,roundId); }

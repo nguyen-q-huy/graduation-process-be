@@ -7,6 +7,7 @@ import com.example.graduationprocessbe.dto.response.UserResponse;
 
 public interface AuthService {
     LoginResponse login(LoginRequest loginRequest);
+    void logout(String token);
 
     UserResponse register(CreateUserRequest createUserRequest);
     UserResponse getCurrentUser(String userId);

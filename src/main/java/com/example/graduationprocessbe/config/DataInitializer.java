@@ -30,30 +30,27 @@ public class DataInitializer implements ApplicationRunner {
     private final UserRoleRepository userRoleRepository;
     private final JdbcTemplate jdbcTemplate;
     private final PasswordEncoder passwordEncoder;
+    private final DemoDataSeeder demoDataSeeder;
 
     @Override
     @Transactional
     public void run(ApplicationArguments args) throws Exception {
-        // The versioned SQL is also used for upgrades of an existing database.
-        // Execute as one PostgreSQL script (DO block), not a semicolon-split script.
+        // One file contains the versioned baseline and forward-only upgrades.
+        // PostgreSQL executes the complete script in this transaction.
         String seed = new ClassPathResource("seed_rbac_and_menus.sql")
                 .getContentAsString(StandardCharsets.UTF_8);
         jdbcTemplate.execute(seed);
-        if (!jdbcTemplate.queryForObject("select exists(select 1 from app_seed_versions where version='role-rbac-v6')",Boolean.class)) {
-            jdbcTemplate.execute(new ClassPathResource("seed_permission_layers.sql").getContentAsString(StandardCharsets.UTF_8));
-        }
-        jdbcTemplate.execute(new ClassPathResource("migrate_role_rbac.sql").getContentAsString(StandardCharsets.UTF_8));
-        jdbcTemplate.execute(new ClassPathResource("remove_permission_catalogue.sql").getContentAsString(StandardCharsets.UTF_8));
-        jdbcTemplate.execute(new ClassPathResource("compact_rbac_catalogue.sql").getContentAsString(StandardCharsets.UTF_8));
-
-        jdbcTemplate.execute(new ClassPathResource("migrate_actor_rbac.sql").getContentAsString(StandardCharsets.UTF_8));
-        jdbcTemplate.execute(new ClassPathResource("migrate_actor_constraints.sql").getContentAsString(StandardCharsets.UTF_8));
 
         ensureUser("admin", "admin@graduation.local", "Quản trị viên Nguyễn Văn An", role("ADMIN"), "ADMIN");
         if (seedDemo) {
             ensureUser("khoa", "khoa@graduation.local", "Giảng viên phụ trách Khoa CNTT", role("FACULTY_STAFF"), "LECTURER");
             ensureUser("lecturer", "lecturer@graduation.local", "TS. Nguyễn Văn Tuấn", role("LECTURER"), "LECTURER");
+            ensureUser("lecturer2", "lecturer2@graduation.local", "ThS. Lê Thị Mai", role("LECTURER"), "LECTURER");
             ensureUser("student", "student@graduation.local", "Trần Minh Quân", role("STUDENT"), "STUDENT");
+            ensureUser("student2", "student2@graduation.local", "Nguyễn Thị Lan", role("STUDENT"), "STUDENT");
+            ensureUser("student3", "student3@graduation.local", "Phạm Quốc Huy", role("STUDENT"), "STUDENT");
+            ensureUser("student4", "student4@graduation.local", "Vũ Thảo Vy", role("STUDENT"), "STUDENT");
+            demoDataSeeder.seed();
         }
         if (userRoleRepository.countActiveGlobalAdmins()==0)
             throw new IllegalStateException("Cần ít nhất một ADMIN toàn hệ thống đang hoạt động");

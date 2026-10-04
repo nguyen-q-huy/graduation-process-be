@@ -19,6 +19,9 @@ public class CreateUserRequest {
     @Size(max = 120, message = "Email must not exceed 120 characters")
     private String email;
 
+    @Size(max = 30, message = "Phone must not exceed 30 characters")
+    private String phone;
+
     @NotBlank(message = "Full name is required")
     @Size(max = 100, message = "Full name must not exceed 100 characters")
     private String fullName;

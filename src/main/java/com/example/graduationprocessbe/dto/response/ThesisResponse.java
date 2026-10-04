@@ -22,6 +22,9 @@ public class ThesisResponse {
     private String phaseId;
     private String processInstanceId;
     private String currentStatus;
+    private Boolean guidanceApproved;
+    private LocalDateTime guidanceRespondedAt;
+    private String guidanceComment;
     private LocalDateTime createdDate;
     private LocalDateTime lastModifiedDate;
 }

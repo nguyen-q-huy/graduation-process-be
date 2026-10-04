@@ -20,4 +20,11 @@ public class TaskResponse {
     private String assignee;
     private String processInstanceId;
     private LocalDateTime createTime;
+    private String kind;
+    private LocalDateTime dueDate;
+
+    public TaskResponse(String id,String name,String taskDefinitionKey,String assignee,String processInstanceId,LocalDateTime createTime) {
+        this.id=id; this.name=name; this.taskDefinitionKey=taskDefinitionKey; this.assignee=assignee;
+        this.processInstanceId=processInstanceId; this.createTime=createTime;
+    }
 }

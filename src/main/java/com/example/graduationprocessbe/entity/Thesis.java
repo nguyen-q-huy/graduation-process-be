@@ -41,4 +41,9 @@ public class Thesis extends BaseEntity {
 
     @Column(length = 50, name = "current_status")
     private String currentStatus;
+
+    private Boolean guidanceApproved;
+    private java.time.LocalDateTime guidanceRespondedAt;
+    @Column(columnDefinition = "TEXT")
+    private String guidanceComment;
 }

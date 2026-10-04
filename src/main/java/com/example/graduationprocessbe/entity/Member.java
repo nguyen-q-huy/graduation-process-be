@@ -26,4 +26,9 @@ public class Member {
     @Id
     @Column(name = "thesis_id")
     private String thesisId;
+
+    @Column(name = "thesis_round_id", nullable = false)
+    private String thesisRoundId;
+
+    public Member(String userId,String thesisId) { this.userId=userId; this.thesisId=thesisId; }
 }

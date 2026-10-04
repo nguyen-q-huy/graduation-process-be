@@ -17,6 +17,8 @@ import org.springframework.http.HttpStatus;
 import com.example.graduationprocessbe.service.MenuService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.jdbc.core.JdbcTemplate;
+import com.example.graduationprocessbe.repository.UserRepository;
 
 import java.util.*;
 
@@ -33,6 +35,8 @@ public class MenuServiceImpl implements MenuService {
     private final com.example.graduationprocessbe.service.RbacAuditService audit;
     private final com.example.graduationprocessbe.repository.RoleAllowedPermissionRepository allowed;
     private final com.example.graduationprocessbe.repository.RoleRepository roles;
+    private final JdbcTemplate jdbc;
+    private final UserRepository users;
 
     @Override
     @Transactional
@@ -109,7 +113,11 @@ public class MenuServiceImpl implements MenuService {
         // Filter tree recursively based on permissionCode:
         // A leaf node is visible if permissionCode is null/empty or in userPermissions
         // A parent node is visible if it has at least one visible child!
-        return filterByPermissions(rootNodes, userPermissions);
+        List<MenuResponse> permitted = filterByPermissions(rootNodes, userPermissions);
+        String actor = users.findById(userId).orElseThrow().getUserType();
+        Set<String> governed = new HashSet<>(jdbc.queryForList("SELECT DISTINCT menu_code FROM menu_actor_visibility", String.class));
+        Set<String> visible = new HashSet<>(jdbc.queryForList("SELECT menu_code FROM menu_actor_visibility WHERE user_type=?", String.class, actor));
+        return permitted.stream().filter(root -> !governed.contains(root.getCode()) || visible.contains(root.getCode())).toList();
     }
 
     @Override

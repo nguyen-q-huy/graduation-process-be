@@ -1,0 +1,84 @@
+package com.example.graduationprocessbe.controller;
+
+import com.example.graduationprocessbe.dto.ApiResponseWrapper;
+import com.example.graduationprocessbe.service.CoreWorkflowService;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Map;
+
+import static com.example.graduationprocessbe.util.ApiResponses.ok;
+
+@RestController
+@RequestMapping("/api/core")
+@RequiredArgsConstructor
+public class CoreWorkflowController {
+    private final CoreWorkflowService core;
+
+    public record YearInput(String code,int startYear) {}
+    public record SemesterInput(String academicYearId,int number) {}
+    public record RoundInput(String code,String name,String semesterId,Boolean active,
+                             OffsetDateTime registrationOpensAt,OffsetDateTime registrationClosesAt) {}
+    public record LecturerInput(String lecturerId,String orientation) {}
+    public record DraftInput(String name,String sourceId) {}
+    public record TemplateInput(String templateId) {}
+    public record WindowInput(String stepKey,OffsetDateTime opensAt,OffsetDateTime closesAt) {}
+
+    @GetMapping("/years") public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> years() { return ok(core.years()); }
+    @GetMapping("/semesters") public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> semesters() { return ok(core.semesters()); }
+    @GetMapping("/rounds") public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> rounds() { return ok(core.rounds()); }
+    @GetMapping("/overdue") @PreAuthorize("hasAnyRole('ADMIN','FACULTY_STAFF')")
+    public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> overdue() { return ok(core.overdueTasks()); }
+    @GetMapping("/rounds/{id}/lecturers") public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> lecturers(@PathVariable String id) { return ok(core.lecturers(id)); }
+    @GetMapping("/rounds/{id}/windows") public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> windows(@PathVariable String id) { return ok(core.windows(id)); }
+    @GetMapping("/lecturer-candidates") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> lecturerCandidates() { return ok(core.lecturerCandidates()); }
+    @GetMapping("/rounds/{id}/student-candidates") @PreAuthorize("hasRole('STUDENT')")
+    public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> studentCandidates(@PathVariable String id) { return ok(core.studentCandidates(id)); }
+    @GetMapping("/templates") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> templates() { return ok(core.templates()); }
+    @GetMapping("/templates/{id}/steps") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> steps(@PathVariable String id) { return ok(core.steps(id)); }
+
+    @PostMapping("/years") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Void>> year(@RequestBody YearInput input) { core.createYear(input.code(),input.startYear()); return ok(null); }
+    @PostMapping("/semesters") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Void>> semester(@RequestBody SemesterInput input) { core.createSemester(input.academicYearId(),input.number()); return ok(null); }
+    @PostMapping("/rounds") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Void>> round(@RequestBody RoundInput input) {
+        core.createRound(input.code(),input.name(),input.semesterId(),input.registrationOpensAt(),input.registrationClosesAt(), input.active() == null || input.active()); return ok(null);
+    }
+    @PutMapping("/rounds/{id}") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Void>> updateRound(@PathVariable String id,@RequestBody RoundInput input) {
+        if (input.active() == null) throw new IllegalArgumentException("Cần chọn trạng thái Mở hoặc Đóng");
+        core.updateRound(id,input.name(),input.active(),input.semesterId(),input.registrationOpensAt(),input.registrationClosesAt()); return ok(null);
+    }
+    @PostMapping("/rounds/{id}/lecturers") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Void>> addLecturer(@PathVariable String id,@RequestBody LecturerInput input) {
+        core.addLecturer(id,input.lecturerId(),input.orientation()); return ok(null);
+    }
+    @DeleteMapping("/rounds/{id}/lecturers/{lecturerId}") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Void>> removeLecturer(@PathVariable String id,@PathVariable String lecturerId) {
+        core.removeLecturer(id,lecturerId); return ok(null);
+    }
+    @PutMapping("/rounds/{id}/windows") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Void>> window(@PathVariable String id,@RequestBody WindowInput input) {
+        core.setWindow(id,input.stepKey(),input.opensAt(),input.closesAt()); return ok(null);
+    }
+    @PostMapping("/templates") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<String>> draft(@RequestBody DraftInput input) { return ok(core.createDraft(input.name(),input.sourceId())); }
+    @PutMapping("/templates/{id}/steps") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Void>> replaceSteps(@PathVariable String id,@RequestBody List<CoreWorkflowService.StepInput> input) {
+        core.replaceSteps(id,input); return ok(null);
+    }
+    @PostMapping("/templates/{id}/publish") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<String>> publish(@PathVariable String id) { return ok(core.publish(id)); }
+    @PutMapping("/rounds/{id}/workflow") @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Void>> assign(@PathVariable String id,@RequestBody TemplateInput input) {
+        core.assignTemplate(id,input.templateId()); return ok(null);
+    }
+}

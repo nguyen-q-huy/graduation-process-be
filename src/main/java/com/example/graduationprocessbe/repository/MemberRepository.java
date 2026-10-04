@@ -8,6 +8,7 @@ import java.util.List;
 
 public interface MemberRepository extends JpaRepository<Member, MemberId> {
     List<Member> findByThesisId(String thesisId);
+    List<Member> findByUserId(String userId);
 
     void deleteByThesisId(String thesisId);
 

@@ -41,6 +41,12 @@ public class AuthServiceImpl implements AuthService {
     private final com.example.graduationprocessbe.repository.RoleRepository roleRepository;
 
     @Override
+    public void logout(String token) {
+        jwtTokenProvider.revokeToken(token);
+        SecurityContextHolder.clearContext();
+    }
+
+    @Override
     @org.springframework.transaction.annotation.Transactional(readOnly = true)
     public LoginResponse login(LoginRequest loginRequest) {
         Authentication authentication = authenticationManager.authenticate(

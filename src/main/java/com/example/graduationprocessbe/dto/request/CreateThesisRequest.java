@@ -13,9 +13,6 @@ public class CreateThesisRequest {
     @Size(max = 255, message = "Title must not exceed 255 characters")
     private String title;
 
-    @NotBlank(message = "Thesis description is required")
-    private String description;
-
     @NotBlank(message = "Student ID is required")
     private String studentId;
 
@@ -24,4 +21,6 @@ public class CreateThesisRequest {
 
     @NotBlank(message = "Phase ID is required")
     private String phaseId;
+
+    private String partnerStudentId;
 }

@@ -8,6 +8,7 @@ import com.example.graduationprocessbe.dto.response.ThesisResponse;
 import com.example.graduationprocessbe.entity.Member;
 import com.example.graduationprocessbe.entity.MemberId;
 import com.example.graduationprocessbe.entity.Thesis;
+import com.example.graduationprocessbe.entity.User;
 import com.example.graduationprocessbe.exception.ApplicationException;
 import com.example.graduationprocessbe.exception.ResourceNotFoundException;
 import com.example.graduationprocessbe.exception.ResponseDetails;
@@ -57,13 +58,17 @@ public class ThesisServiceImpl implements ThesisService {
                     cb.like(cb.lower(root.get("description")), pattern, '\\')));
         }
         if (studentId != null && !studentId.isBlank()) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("student").get("id"), studentId));
+            List<String> groupThesisIds=memberRepository.findByUserId(studentId).stream().map(Member::getThesisId).toList();
+            spec = spec.and((root, query, cb) -> cb.or(
+                    cb.equal(root.get("student").get("id"), studentId),root.get("id").in(groupThesisIds)));
         }
         if (lecturerId != null && !lecturerId.isBlank()) {
             spec = spec.and((root, query, cb) -> cb.equal(root.get("lecturer").get("id"), lecturerId));
         }
         if (status != null && !status.isBlank()) {
-            spec = spec.and((root, query, cb) -> cb.equal(root.get("currentStatus"), status));
+            spec = spec.and((root, query, cb) -> "PENDING_SUPERVISOR".equals(status)
+                    ? cb.and(root.get("currentStatus").in("PENDING_SUPERVISOR", "REGISTERED"), cb.isNull(root.get("processInstanceId")))
+                    : cb.equal(root.get("currentStatus"), status));
         }
         if (phaseId != null && !phaseId.isBlank()) {
             spec = spec.and((root, query, cb) -> cb.equal(root.get("phaseId"), phaseId));
@@ -84,9 +89,12 @@ public class ThesisServiceImpl implements ThesisService {
             thesis.setDescription(request.getDescription());
         }
         if (request.getPhaseId() != null) {
+            if (!request.getPhaseId().equals(thesis.getPhaseId())) throw new IllegalArgumentException("Không được đổi đợt của hồ sơ đã đăng ký");
             thesis.setPhaseId(request.getPhaseId());
         }
         if (request.getLecturerId() != null) {
+            if (thesis.getProcessInstanceId()!=null && !request.getLecturerId().equals(thesis.getLecturer().getId()))
+                throw new IllegalArgumentException("Không được đổi GVHD sau khi quy trình đã bắt đầu");
             thesis.setLecturer(userRepository.findById(request.getLecturerId())
                     .orElseThrow(() -> new ResourceNotFoundException(
                             "User not found: " + request.getLecturerId())));
@@ -117,19 +125,27 @@ public class ThesisServiceImpl implements ThesisService {
     @Override
     @Transactional
     public List<MemberResponse> addMember(String thesisId, String userId) {
-        find(thesisId);
-        userRepository.findById(userId)
+        Thesis thesis=find(thesisId);
+        if (thesis.getProcessInstanceId()!=null) throw new IllegalArgumentException("Thành viên nhóm được chốt khi đăng ký đề tài");
+        User student=userRepository.findById(userId)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + userId));
+        if (!"STUDENT".equals(student.getUserType())) throw new IllegalArgumentException("Chỉ sinh viên được tham gia nhóm");
+        if (memberRepository.findByThesisId(thesisId).size()>=2) throw new IllegalArgumentException("Nhóm tối đa 2 sinh viên");
+        if (memberRepository.findByUserId(userId).stream().anyMatch(m -> thesis.getPhaseId().equals(m.getThesisRoundId())))
+            throw new IllegalArgumentException("Sinh viên đã thuộc nhóm khác trong đợt");
         if (memberRepository.existsById(new MemberId(userId, thesisId))) {
             throw new ApplicationException(ResponseDetails.DATA_EXISTED);
         }
-        memberRepository.save(new Member(userId, thesisId));
+        Member member=new Member(userId, thesisId); member.setThesisRoundId(thesis.getPhaseId()); memberRepository.save(member);
         return membersOf(thesisId);
     }
 
     @Override
     @Transactional
     public List<MemberResponse> removeMember(String thesisId, String userId) {
+        Thesis thesis=find(thesisId);
+        if (thesis.getProcessInstanceId()!=null) throw new IllegalArgumentException("Thành viên nhóm được chốt khi đăng ký đề tài");
+        if (thesis.getStudent().getId().equals(userId)) throw new IllegalArgumentException("Không được bỏ sinh viên đăng ký đề tài");
         MemberId key = new MemberId(userId, thesisId);
         if (!memberRepository.existsById(key)) {
             throw new ResourceNotFoundException("User " + userId + " is not a member of thesis " + thesisId);
