@@ -34,11 +34,11 @@ public class DepartmentController {
         return ok(departmentService.create(request));
     }
 
-    /** GET /api/departments?keyword=&page=0&size=10&sortBy=deptCode&direction=asc */
+    /** GET /api/departments?keyword=&page=1&size=10&sortBy=deptCode&direction=asc */
     @GetMapping
     public ResponseEntity<ApiResponseWrapper<PageResponse<DepartmentResponse>>> search(
             @RequestParam(required = false) String keyword,
-            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String sortBy,
             @RequestParam(defaultValue = "desc") String direction) {

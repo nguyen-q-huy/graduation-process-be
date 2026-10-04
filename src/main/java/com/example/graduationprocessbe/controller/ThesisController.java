@@ -46,7 +46,7 @@ public class ThesisController {
         return ok(thesisProcessService.createThesis(request));
     }
 
-    /** GET /api/theses?keyword=&studentId=&lecturerId=&status=&phaseId=&page=0&size=10&sortBy=createdDate&direction=desc */
+    /** GET /api/theses?keyword=&studentId=&lecturerId=&status=&phaseId=&page=1&size=10&sortBy=createdDate&direction=desc */
     @GetMapping
     public ResponseEntity<ApiResponseWrapper<PageResponse<ThesisResponse>>> search(
             @RequestParam(required = false) String keyword,
@@ -54,7 +54,7 @@ public class ThesisController {
             @RequestParam(required = false) String lecturerId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String phaseId,
-            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String sortBy,
             @RequestParam(defaultValue = "desc") String direction) {
@@ -94,7 +94,7 @@ public class ThesisController {
     @GetMapping("/{id}/audit-logs")
     public ResponseEntity<ApiResponseWrapper<PageResponse<AuditLogResponse>>> getAuditLogs(
             @PathVariable String id,
-            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String sortBy,
             @RequestParam(defaultValue = "desc") String direction) {

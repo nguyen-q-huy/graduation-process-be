@@ -26,7 +26,7 @@ public class PageResponse<T> {
     public static <E, T> PageResponse<T> from(Page<E> page, Function<E, T> mapper) {
         return new PageResponse<>(
                 page.getContent().stream().map(mapper).toList(),
-                page.getNumber(),
+                page.getNumber() + 1,
                 page.getSize(),
                 page.getTotalElements(),
                 page.getTotalPages(),

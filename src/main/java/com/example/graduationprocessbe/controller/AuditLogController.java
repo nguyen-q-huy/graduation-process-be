@@ -35,7 +35,7 @@ public class AuditLogController {
         return ok(auditLogService.create(request));
     }
 
-    /** GET /api/audit-logs?processInstanceId=&actorId=&actionName=&from=2026-01-01T00:00:00&to=...&page=0&size=10 */
+    /** GET /api/audit-logs?processInstanceId=&actorId=&actionName=&from=2026-01-01T00:00:00&to=...&page=1&size=10 */
     @GetMapping
     public ResponseEntity<ApiResponseWrapper<PageResponse<AuditLogResponse>>> search(
             @RequestParam(required = false) String processInstanceId,
@@ -43,7 +43,7 @@ public class AuditLogController {
             @RequestParam(required = false) String actionName,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime from,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime to,
-            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
             @RequestParam(required = false) String sortBy,
             @RequestParam(defaultValue = "desc") String direction) {

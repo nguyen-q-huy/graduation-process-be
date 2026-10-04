@@ -19,7 +19,7 @@ public final class PageUtil {
      */
     public static Pageable of(int page, int size, String sortBy, String direction,
                               Set<String> allowedSortFields, String defaultSort) {
-        int safePage = Math.max(page, 0);
+        int safePage = Math.max(page, 1) - 1; // page từ client bắt đầu từ 1
         int safeSize = Math.min(Math.max(size, 1), MAX_SIZE);
         String field = sortBy != null && allowedSortFields.contains(sortBy) ? sortBy : defaultSort;
         Sort.Direction dir = "asc".equalsIgnoreCase(direction) ? Sort.Direction.ASC : Sort.Direction.DESC;
