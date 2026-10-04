@@ -4,14 +4,14 @@ import com.example.graduationprocessbe.dto.ApiResponseWrapper;
 import com.example.graduationprocessbe.dto.request.CreateMenuRequest;
 import com.example.graduationprocessbe.dto.request.UpdateMenuRequest;
 import com.example.graduationprocessbe.dto.response.MenuResponse;
-import com.example.graduationprocessbe.entity.Security;
 import com.example.graduationprocessbe.exception.ResponseDetails;
-import com.example.graduationprocessbe.repository.SecurityRepository;
+import com.example.graduationprocessbe.repository.UserRepository;
 import com.example.graduationprocessbe.security.CustomUserDetails;
 import com.example.graduationprocessbe.service.MenuService;
 import com.example.graduationprocessbe.util.PaginationUtils;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -33,7 +33,7 @@ import java.util.List;
 public class MenuController {
 
     private final MenuService menuService;
-    private final SecurityRepository securityRepository;
+    private final UserRepository userRepository;
 
     @GetMapping("/my-menus")
     public ResponseEntity<ApiResponseWrapper<List<MenuResponse>>> getMyMenus(
@@ -44,9 +44,9 @@ public class MenuController {
         if (authentication.getPrincipal() instanceof CustomUserDetails userDetails) {
             userId = userDetails.getUserId();
         } else {
-            Security security = securityRepository.findByUsername(authentication.getName())
+            var user = userRepository.findByUsername(authentication.getName())
                     .orElseThrow(() -> new RuntimeException("User not found"));
-            userId = security.getUserId();
+            userId = user.getId();
         }
 
         List<MenuResponse> menus = menuService.getUserMenus(userId, roundId);
@@ -58,6 +58,7 @@ public class MenuController {
     }
 
     @GetMapping("/master")
+    @PreAuthorize("hasAnyAuthority('VIEW_ROLES','VIEW_MENUS')")
     public ResponseEntity<ApiResponseWrapper<List<MenuResponse>>> getMasterMenus() {
         List<MenuResponse> menus = menuService.getMasterMenuTree();
         return ResponseEntity.ok(new ApiResponseWrapper<>(
@@ -67,6 +68,7 @@ public class MenuController {
     }
 
     @GetMapping("/master-page")
+    @PreAuthorize("hasAnyAuthority('VIEW_ROLES','VIEW_MENUS')")
     public ResponseEntity<ApiResponseWrapper<?>> getMasterMenusPage(
             @RequestParam(required = false) Integer page,
             @RequestParam(required = false) Integer size,
@@ -88,6 +90,7 @@ public class MenuController {
     }
 
     @PostMapping
+    @PreAuthorize("hasAuthority('VIEW_MENUS') and hasAuthority('MENUS_CREATE')")
     public ResponseEntity<ApiResponseWrapper<MenuResponse>> createMenu(
             @Valid @RequestBody CreateMenuRequest request) {
         return ResponseEntity.status(ResponseDetails.API_SUCCESSFULLY.getHttpStatus())
@@ -97,6 +100,7 @@ public class MenuController {
     }
 
     @PutMapping("/{id}")
+    @PreAuthorize("hasAuthority('VIEW_MENUS') and hasAuthority('MENUS_UPDATE')")
     public ResponseEntity<ApiResponseWrapper<MenuResponse>> updateMenu(
             @PathVariable String id,
             @Valid @RequestBody UpdateMenuRequest request) {
@@ -107,6 +111,7 @@ public class MenuController {
     }
 
     @DeleteMapping("/{id}")
+    @PreAuthorize("hasAuthority('VIEW_MENUS') and hasAuthority('MENUS_DELETE')")
     public ResponseEntity<ApiResponseWrapper<Void>> deleteMenu(
             @PathVariable String id) {
         menuService.deleteMenu(id);

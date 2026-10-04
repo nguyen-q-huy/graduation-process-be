@@ -1,10 +1,9 @@
 package com.example.graduationprocessbe.security;
 
-import com.example.graduationprocessbe.entity.Security;
 import com.example.graduationprocessbe.entity.User;
-import com.example.graduationprocessbe.repository.SecurityRepository;
 import com.example.graduationprocessbe.repository.UserRepository;
 import com.example.graduationprocessbe.repository.UserRoleRepository;
+import com.example.graduationprocessbe.service.EffectivePermissionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -14,6 +13,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -21,9 +21,9 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class CustomUserDetailsService implements UserDetailsService {
 
-    private final SecurityRepository securityRepository;
     private final UserRepository userRepository;
     private final UserRoleRepository userRoleRepository;
+    private final EffectivePermissionService effectivePermissions;
 
     /**
      * Load user by userId and active thesisRoundId.
@@ -33,9 +33,8 @@ public class CustomUserDetailsService implements UserDetailsService {
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found with id: " + userId));
 
-        Security security = securityRepository.findByUserId(userId).orElse(null);
-        String username = (security != null) ? security.getUsername() : user.getEmail();
-        String password = (security != null) ? security.getPasswordHash() : "";
+        String username = user.getUsername();
+        String password = user.getPasswordHash();
 
         List<GrantedAuthority> authorities = new ArrayList<>();
 
@@ -46,7 +45,7 @@ public class CustomUserDetailsService implements UserDetailsService {
         }
 
         // 2. Fresh Permissions from DB
-        Set<String> permissionCodes = userRoleRepository.findPermissionCodesByUserIdAndRoundId(userId, roundId);
+        Set<String> permissionCodes = effectivePermissions.codes(userId,roundId);
         for (String perm : permissionCodes) {
             authorities.add(new SimpleGrantedAuthority(perm));
         }
@@ -58,6 +57,7 @@ public class CustomUserDetailsService implements UserDetailsService {
                 user.getFullName(),
                 user.getEmail(),
                 user.getUserType(),
+                user.getStatus(),
                 roleCodes,
                 permissionCodes,
                 authorities
@@ -66,9 +66,9 @@ public class CustomUserDetailsService implements UserDetailsService {
 
     @Override
     public UserDetails loadUserByUsername(String username) throws UsernameNotFoundException {
-        Security security = securityRepository.findByUsername(username)
+        User user = userRepository.findByUsername(username)
                 .orElseThrow(() -> new UsernameNotFoundException("User not found with username: " + username));
 
-        return loadUserByUserId(security.getUserId(), null);
+        return loadUserByUserId(user.getId(), null);
     }
 }

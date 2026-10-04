@@ -12,5 +12,9 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class AssignPermissionsRequest {
+    @jakarta.validation.constraints.NotNull
     private List<String> permissionIds;
+    @jakarta.validation.constraints.NotNull
+    @jakarta.validation.constraints.PositiveOrZero
+    private Long expectedVersion;
 }

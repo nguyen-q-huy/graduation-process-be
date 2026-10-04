@@ -17,7 +17,7 @@ import java.util.Date;
 @RequiredArgsConstructor
 public class JwtTokenProvider {
 
-    @Value("${jwt.secret:mySecretKeyForJWTSigningThatIsAtLeast256BitsLongForHS256Algorithm}")
+    @Value("${jwt.secret}")
     private String jwtSecret;
 
     @Value("${jwt.expiration:86400000}")

@@ -17,5 +17,6 @@ public interface UserMapper {
     @Mapping(target = "lastModifiedDate", ignore = true)
     @Mapping(target = "lastModifiedBy", ignore = true)
     @Mapping(target = "department", ignore = true)
+    @Mapping(target = "passwordHash", ignore = true)
     User toEntity(CreateUserRequest request);
 }

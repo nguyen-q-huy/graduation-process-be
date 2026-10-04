@@ -18,4 +18,6 @@ public class RoleResponse {
     private Integer permissionCount;
     private List<String> permissionCodes;
     private List<String> permissionIds;
+    private List<String> allowedPermissionIds;
+    private Long permissionsVersion;
 }

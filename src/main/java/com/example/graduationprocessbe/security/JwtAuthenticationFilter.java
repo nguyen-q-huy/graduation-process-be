@@ -36,10 +36,17 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                 // 2. Read active thesis round context from header if sent by client
                 String roundId = request.getHeader("X-Thesis-Round-Id");
+                String path = request.getRequestURI();
+                // Configuration endpoints require global authority, never a scoped role.
+                if (path.startsWith("/api/rbac/") || path.startsWith("/api/users") || path.startsWith("/api/roles")
+                    || path.startsWith("/api/permissions") || (path.startsWith("/api/menus") && !path.endsWith("/my-menus"))) roundId = null;
 
                 // 3. Query DB on EVERY request to get fresh roles & permissions
                 CustomUserDetails userDetails = customUserDetailsService.loadUserByUserId(userId, roundId);
 
+                if (!userDetails.isEnabled() || !userDetails.isAccountNonLocked()) {
+                    response.sendError(HttpServletResponse.SC_UNAUTHORIZED,"Tài khoản đã bị khóa"); return;
+                }
                 // 4. Set Authentication in SecurityContext
                 UsernamePasswordAuthenticationToken authentication =
                         new UsernamePasswordAuthenticationToken(

@@ -19,6 +19,7 @@ public class CustomUserDetails implements UserDetails {
     private final String fullName;
     private final String email;
     private final String userType;
+    private final String status;
     private final List<String> roles;
     private final Set<String> permissions;
     private final Collection<? extends GrantedAuthority> authorities;
@@ -44,9 +45,7 @@ public class CustomUserDetails implements UserDetails {
     }
 
     @Override
-    public boolean isAccountNonLocked() {
-        return true;
-    }
+    public boolean isAccountNonLocked() { return "ACTIVE".equals(status); }
 
     @Override
     public boolean isCredentialsNonExpired() {
@@ -54,7 +53,5 @@ public class CustomUserDetails implements UserDetails {
     }
 
     @Override
-    public boolean isEnabled() {
-        return true;
-    }
+    public boolean isEnabled() { return "ACTIVE".equals(status); }
 }
