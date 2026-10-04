@@ -21,6 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.json.JsonMapper;
 
 import java.time.LocalDateTime;
+import java.util.Map;
 import java.util.Set;
 
 @Service
@@ -39,15 +40,14 @@ public class AuditLogServiceImpl implements AuditLogService {
     public AuditLogResponse create(CreateAuditLogRequest request) {
         User actor = userRepository.findById(request.getActorId())
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + request.getActorId()));
-        String payload = request.getPayload();
-        if (payload != null && !payload.isBlank()) {
+        Map<String, Object> payload = null;
+        if (request.getPayload() != null && !request.getPayload().isBlank()) {
             try {
-                jsonMapper.readTree(payload);
+                payload = jsonMapper.readValue(request.getPayload(), Map.class);
             } catch (RuntimeException e) {
-                throw new ApplicationException("INVALID_PAYLOAD", "Payload must be valid JSON", HttpStatus.BAD_REQUEST);
+                throw new ApplicationException("INVALID_PAYLOAD", "Payload must be a valid JSON object",
+                        HttpStatus.BAD_REQUEST);
             }
-        } else {
-            payload = null;
         }
         return toResponse(save(request.getProcessInstanceId(), actor, request.getActionName(),
                 request.getStepName(), payload));
@@ -55,9 +55,12 @@ public class AuditLogServiceImpl implements AuditLogService {
 
     @Override
     @Transactional
+    @SuppressWarnings("unchecked")
     public void record(String processInstanceId, User actor, String actionName, String stepName, Object payload) {
-        save(processInstanceId, actor, actionName, stepName,
-                payload == null ? null : jsonMapper.writeValueAsString(payload));
+        Map<String, Object> map = payload == null ? null
+                : payload instanceof Map<?, ?> m ? (Map<String, Object>) m
+                : jsonMapper.convertValue(payload, Map.class);
+        save(processInstanceId, actor, actionName, stepName, map);
     }
 
     @Override
@@ -93,7 +96,8 @@ public class AuditLogServiceImpl implements AuditLogService {
         return PageResponse.from(result, this::toResponse);
     }
 
-    private AuditLog save(String processInstanceId, User actor, String actionName, String stepName, String payload) {
+    private AuditLog save(String processInstanceId, User actor, String actionName, String stepName,
+                          Map<String, Object> payload) {
         AuditLog log = new AuditLog();
         log.setProcessInstanceId(processInstanceId);
         log.setActor(actor);
@@ -111,7 +115,7 @@ public class AuditLogServiceImpl implements AuditLogService {
         response.setActor(log.getActor() == null ? null : userMapper.toResponse(log.getActor()));
         response.setActionName(log.getActionName());
         response.setStepName(log.getStepName());
-        response.setPayload(log.getPayload());
+        response.setPayload(log.getPayload() == null ? null : jsonMapper.writeValueAsString(log.getPayload()));
         response.setExecutionTime(log.getExecutionTime());
         response.setCreatedDate(log.getCreatedDate());
         response.setLastModifiedDate(log.getLastModifiedDate());
