@@ -4,6 +4,10 @@ import jakarta.validation.constraints.Size;
 import lombok.Getter;
 import lombok.Setter;
 
+/**
+ * Cập nhật từng phần: field null thì giữ nguyên.
+ * currentStatus không sửa được qua đây vì do Flowable quản lý.
+ */
 @Getter
 @Setter
 public class UpdateThesisRequest {
@@ -15,5 +19,5 @@ public class UpdateThesisRequest {
 
     private String lecturerId;
 
-    private String currentStatus;
+    private String phaseId;
 }

@@ -20,6 +20,11 @@ public interface ThesisProcessService {
     /** Tìm task theo assignee và/hoặc candidateGroup; để null để bỏ qua điều kiện. */
     List<TaskResponse> findTasks(String assignee, String candidateGroup);
 
-    /** Hoàn tất task, truyền biến vào process, cập nhật currentStatus của Thesis. */
+    TaskResponse getTask(String taskId);
+
+    /** Nhận task nhóm về cho một user (đặt assignee). */
+    TaskResponse claimTask(String taskId, String userId);
+
+    /** Hoàn tất task, truyền biến vào process, cập nhật currentStatus của Thesis và ghi audit log. */
     ThesisResponse completeTask(String taskId, Map<String, Object> variables);
 }

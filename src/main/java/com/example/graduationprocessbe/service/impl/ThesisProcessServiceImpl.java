@@ -6,9 +6,11 @@ import com.example.graduationprocessbe.dto.response.ThesisResponse;
 import com.example.graduationprocessbe.entity.Thesis;
 import com.example.graduationprocessbe.entity.User;
 import com.example.graduationprocessbe.exception.ResourceNotFoundException;
-import com.example.graduationprocessbe.mapper.UserMapper;
+import com.example.graduationprocessbe.mapper.ThesisMapper;
 import com.example.graduationprocessbe.repository.ThesisRepository;
 import com.example.graduationprocessbe.repository.UserRepository;
+import com.example.graduationprocessbe.service.AuditLogService;
+import com.example.graduationprocessbe.service.CurrentUserService;
 import com.example.graduationprocessbe.service.ThesisProcessService;
 import lombok.RequiredArgsConstructor;
 import org.flowable.engine.RuntimeService;
@@ -33,9 +35,11 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
 
     private final ThesisRepository thesisRepository;
     private final UserRepository userRepository;
-    private final UserMapper userMapper;
+    private final ThesisMapper thesisMapper;
     private final RuntimeService runtimeService;
     private final TaskService taskService;
+    private final AuditLogService auditLogService;
+    private final CurrentUserService currentUserService;
 
     @Override
     @Transactional
@@ -60,20 +64,26 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         ProcessInstance instance = runtimeService.startProcessInstanceByKey(PROCESS_KEY, thesis.getId(), variables);
         thesis.setProcessInstanceId(instance.getId());
         refreshStatus(thesis);
+        thesis = thesisRepository.save(thesis);
 
-        return toResponse(thesisRepository.save(thesis));
+        auditLogService.record(instance.getId(), currentUserService.getCurrentUser().orElse(null),
+                "START_PROCESS", thesis.getCurrentStatus(), Map.of("thesisId", thesis.getId()));
+        return thesisMapper.toResponse(thesis);
     }
 
     @Override
     @Transactional(readOnly = true)
     public ThesisResponse getThesis(String thesisId) {
-        return toResponse(findThesis(thesisId));
+        return thesisMapper.toResponse(findThesis(thesisId));
     }
 
     @Override
     @Transactional(readOnly = true)
     public List<TaskResponse> getThesisTasks(String thesisId) {
         Thesis thesis = findThesis(thesisId);
+        if (thesis.getProcessInstanceId() == null) {
+            return List.of();
+        }
         return taskService.createTaskQuery()
                 .processInstanceId(thesis.getProcessInstanceId())
                 .active()
@@ -97,20 +107,37 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
     }
 
     @Override
+    @Transactional(readOnly = true)
+    public TaskResponse getTask(String taskId) {
+        return toTaskResponse(findTask(taskId));
+    }
+
+    @Override
+    @Transactional
+    public TaskResponse claimTask(String taskId, String userId) {
+        findTask(taskId);
+        findUser(userId);
+        taskService.claim(taskId, userId);
+        return toTaskResponse(findTask(taskId));
+    }
+
+    @Override
     @Transactional
     public ThesisResponse completeTask(String taskId, Map<String, Object> variables) {
-        Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
-        if (task == null) {
-            throw new ResourceNotFoundException("Task not found: " + taskId);
-        }
+        Task task = findTask(taskId);
         Thesis thesis = thesisRepository.findByProcessInstanceId(task.getProcessInstanceId())
                 .orElseThrow(() -> new ResourceNotFoundException(
                         "Thesis not found for process instance: " + task.getProcessInstanceId()));
+        Map<String, Object> vars = variables == null ? Map.of() : variables;
 
-        taskService.complete(taskId, variables == null ? Map.of() : variables);
+        taskService.complete(taskId, vars);
 
         refreshStatus(thesis);
-        return toResponse(thesisRepository.save(thesis));
+        thesis = thesisRepository.save(thesis);
+
+        auditLogService.record(task.getProcessInstanceId(), currentUserService.getCurrentUser().orElse(null),
+                "COMPLETE_TASK", task.getTaskDefinitionKey(), vars);
+        return thesisMapper.toResponse(thesis);
     }
 
     /** currentStatus = taskDefinitionKey của task đang chờ, hoặc COMPLETED khi process kết thúc. */
@@ -122,6 +149,14 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         thesis.setCurrentStatus(tasks.isEmpty() ? STATUS_COMPLETED : tasks.get(0).getTaskDefinitionKey());
     }
 
+    private Task findTask(String taskId) {
+        Task task = taskService.createTaskQuery().taskId(taskId).singleResult();
+        if (task == null) {
+            throw new ResourceNotFoundException("Task not found: " + taskId);
+        }
+        return task;
+    }
+
     private User findUser(String id) {
         return userRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("User not found: " + id));
@@ -130,21 +165,6 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
     private Thesis findThesis(String id) {
         return thesisRepository.findById(id)
                 .orElseThrow(() -> new ResourceNotFoundException("Thesis not found: " + id));
-    }
-
-    private ThesisResponse toResponse(Thesis thesis) {
-        ThesisResponse response = new ThesisResponse();
-        response.setId(thesis.getId());
-        response.setTitle(thesis.getTitle());
-        response.setDescription(thesis.getDescription());
-        response.setStudent(userMapper.toResponse(thesis.getStudent()));
-        response.setLecturer(userMapper.toResponse(thesis.getLecturer()));
-        response.setPhaseId(thesis.getPhaseId());
-        response.setProcessInstanceId(thesis.getProcessInstanceId());
-        response.setCurrentStatus(thesis.getCurrentStatus());
-        response.setCreatedDate(thesis.getCreatedDate());
-        response.setLastModifiedDate(thesis.getLastModifiedDate());
-        return response;
     }
 
     private TaskResponse toTaskResponse(Task task) {

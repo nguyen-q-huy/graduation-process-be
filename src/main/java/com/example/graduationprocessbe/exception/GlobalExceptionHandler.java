@@ -6,6 +6,7 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.support.DefaultMessageSourceResolvable;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -84,6 +85,22 @@ public class GlobalExceptionHandler {
         
         log.error("Application error: {} - Path: {}", ex.getMessage(), request.getRequestURI(), ex);
         return ResponseEntity.status(ex.getStatus()).body(response);
+    }
+
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<ApiResponseWrapper<String>> handleDataIntegrity(
+            DataIntegrityViolationException ex,
+            HttpServletRequest request) {
+
+        ApiResponseWrapper<String> response = new ApiResponseWrapper<>(
+                "FAILURE",
+                "DATA_CONFLICT",
+                "Operation violates a data constraint (record is referenced elsewhere or duplicated)",
+                null
+        );
+
+        log.error("Data integrity violation: {} - Path: {}", ex.getMessage(), request.getRequestURI(), ex);
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(response);
     }
 
     @ExceptionHandler(Exception.class)
