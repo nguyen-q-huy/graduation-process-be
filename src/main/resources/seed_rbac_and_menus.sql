@@ -1419,3 +1419,110 @@ BEGIN
     ON CONFLICT DO NOTHING;
   INSERT INTO app_seed_versions(version) VALUES('restore-main-navigation-v1');
 END $restore_main_navigation$;
+
+-- Faculty proposal review screen: lists only proposal review tasks.
+DO $proposal_review_menu_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261011,1);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='proposal-review-menu-v1') THEN RETURN; END IF;
+    INSERT INTO menus(id,code,label,icon,path,parent_id,sort_order,active,created_date,last_modified_date)
+    VALUES(gen_random_uuid()::text,'duyet-de-cuong-khoa','Duyệt đề cương','FileTextOutlined','/progress/proposals',
+        (SELECT id FROM menus WHERE code='ho-so-tien-do'),90,true,now(),now()) ON CONFLICT(code) DO NOTHING;
+    INSERT INTO permissions(id,code,name,module,menu_code,action,enabled,created_date,last_modified_date)
+    VALUES(gen_random_uuid()::text,'VIEW_DUYET_DE_CUONG_KHOA','Truy cập / Xem: Duyệt đề cương',
+        'MENU','duyet-de-cuong-khoa','VIEW',true,now(),now()) ON CONFLICT(code) DO NOTHING;
+    UPDATE menus SET permission_code='VIEW_DUYET_DE_CUONG_KHOA' WHERE code='duyet-de-cuong-khoa';
+    INSERT INTO role_allowed_permissions(id,role_id,permission_id,created_date,last_modified_date)
+    SELECT gen_random_uuid()::text,r.id,p.id,now(),now() FROM roles r CROSS JOIN permissions p
+    WHERE p.code='VIEW_DUYET_DE_CUONG_KHOA' AND r.role_code IN ('ADMIN','FACULTY_STAFF')
+    ON CONFLICT(role_id,permission_id) DO NOTHING;
+    INSERT INTO role_permissions(id,role_id,permission_id,created_date,last_modified_date)
+    SELECT gen_random_uuid()::text,r.id,p.id,now(),now() FROM roles r CROSS JOIN permissions p
+    WHERE p.code='VIEW_DUYET_DE_CUONG_KHOA' AND r.role_code IN ('ADMIN','FACULTY_STAFF')
+    ON CONFLICT(role_id,permission_id) DO NOTHING;
+    UPDATE roles SET permissions_version=permissions_version+1 WHERE role_code IN ('ADMIN','FACULTY_STAFF');
+    INSERT INTO app_seed_versions(version) VALUES('proposal-review-menu-v1');
+END $proposal_review_menu_v1$;
+
+-- Explanation of what changed when a proposal is resubmitted after Faculty feedback.
+DO $submission_explanation_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261011,2);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='submission-explanation-v1') THEN RETURN; END IF;
+    ALTER TABLE thesis_submissions ADD COLUMN IF NOT EXISTS explanation text;
+    INSERT INTO app_seed_versions(version) VALUES('submission-explanation-v1');
+END $submission_explanation_v1$;
+
+-- Lecturer proposal confirmation screen: lists the proposals the lecturer has to confirm.
+DO $lecturer_proposal_menu_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261011,3);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='lecturer-proposal-menu-v1') THEN RETURN; END IF;
+    INSERT INTO menus(id,code,label,icon,path,parent_id,sort_order,active,created_date,last_modified_date)
+    VALUES(gen_random_uuid()::text,'duyet-de-cuong-gvhd','Duyệt đề cương','CheckSquareOutlined','/lecturer/advising/proposals',
+        (SELECT id FROM menus WHERE code='huong-dan-do-an'),65,true,now(),now()) ON CONFLICT(code) DO NOTHING;
+    INSERT INTO permissions(id,code,name,module,menu_code,action,enabled,created_date,last_modified_date)
+    VALUES(gen_random_uuid()::text,'VIEW_DUYET_DE_CUONG_GVHD','Truy cập / Xem: Duyệt đề cương (GVHD)',
+        'MENU','duyet-de-cuong-gvhd','VIEW',true,now(),now()) ON CONFLICT(code) DO NOTHING;
+    UPDATE menus SET permission_code='VIEW_DUYET_DE_CUONG_GVHD' WHERE code='duyet-de-cuong-gvhd';
+    INSERT INTO role_allowed_permissions(id,role_id,permission_id,created_date,last_modified_date)
+    SELECT gen_random_uuid()::text,r.id,p.id,now(),now() FROM roles r CROSS JOIN permissions p
+    WHERE p.code='VIEW_DUYET_DE_CUONG_GVHD' AND r.role_code IN ('ADMIN','LECTURER')
+    ON CONFLICT(role_id,permission_id) DO NOTHING;
+    INSERT INTO role_permissions(id,role_id,permission_id,created_date,last_modified_date)
+    SELECT gen_random_uuid()::text,r.id,p.id,now(),now() FROM roles r CROSS JOIN permissions p
+    WHERE p.code='VIEW_DUYET_DE_CUONG_GVHD' AND r.role_code IN ('ADMIN','LECTURER')
+    ON CONFLICT(role_id,permission_id) DO NOTHING;
+    UPDATE roles SET permissions_version=permissions_version+1 WHERE role_code IN ('ADMIN','LECTURER');
+    INSERT INTO app_seed_versions(version) VALUES('lecturer-proposal-menu-v1');
+END $lecturer_proposal_menu_v1$;
+
+-- Lecturer signature (PNG data URL) captured when a proposal is confirmed.
+DO $feedback_signature_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261011,4);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='feedback-signature-v1') THEN RETURN; END IF;
+    ALTER TABLE thesis_feedback ADD COLUMN IF NOT EXISTS signature text;
+    INSERT INTO app_seed_versions(version) VALUES('feedback-signature-v1');
+END $feedback_signature_v1$;
+
+-- Student signature (PNG data URL) captured when the lecturer-approved proposal is sent to Faculty.
+DO $submission_signature_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261011,5);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='submission-signature-v1') THEN RETURN; END IF;
+    ALTER TABLE thesis_submissions ADD COLUMN IF NOT EXISTS signature text;
+    INSERT INTO app_seed_versions(version) VALUES('submission-signature-v1');
+END $submission_signature_v1$;
+
+-- Editable Word templates for the exported proposal / explanation documents.
+DO $document_templates_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261011,6);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='document-templates-v1') THEN RETURN; END IF;
+    CREATE TABLE IF NOT EXISTS document_templates (
+        code varchar(30) PRIMARY KEY,
+        name varchar(150) NOT NULL,
+        file_name varchar(200) NOT NULL,
+        content bytea NOT NULL,
+        is_default boolean NOT NULL DEFAULT true,
+        updated_by varchar(36),
+        updated_at timestamptz NOT NULL DEFAULT now()
+    );
+    INSERT INTO menus(id,code,label,icon,path,parent_id,sort_order,active,created_date,last_modified_date)
+    VALUES(gen_random_uuid()::text,'mau-van-ban','Mẫu văn bản','FileTextOutlined','/document-templates',NULL,135,true,now(),now())
+    ON CONFLICT(code) DO NOTHING;
+    INSERT INTO permissions(id,code,name,module,menu_code,action,enabled,created_date,last_modified_date)
+    VALUES(gen_random_uuid()::text,'VIEW_MAU_VAN_BAN','Truy cập / Xem: Mẫu văn bản',
+        'MENU','mau-van-ban','VIEW',true,now(),now()) ON CONFLICT(code) DO NOTHING;
+    UPDATE menus SET permission_code='VIEW_MAU_VAN_BAN' WHERE code='mau-van-ban';
+    INSERT INTO role_allowed_permissions(id,role_id,permission_id,created_date,last_modified_date)
+    SELECT gen_random_uuid()::text,r.id,p.id,now(),now() FROM roles r CROSS JOIN permissions p
+    WHERE p.code='VIEW_MAU_VAN_BAN' AND r.role_code='ADMIN' ON CONFLICT(role_id,permission_id) DO NOTHING;
+    INSERT INTO role_permissions(id,role_id,permission_id,created_date,last_modified_date)
+    SELECT gen_random_uuid()::text,r.id,p.id,now(),now() FROM roles r CROSS JOIN permissions p
+    WHERE p.code='VIEW_MAU_VAN_BAN' AND r.role_code='ADMIN' ON CONFLICT(role_id,permission_id) DO NOTHING;
+    INSERT INTO menu_actor_visibility(menu_code,user_type) VALUES('mau-van-ban','ADMIN') ON CONFLICT DO NOTHING;
+    UPDATE roles SET permissions_version=permissions_version+1 WHERE role_code='ADMIN';
+    INSERT INTO app_seed_versions(version) VALUES('document-templates-v1');
+END $document_templates_v1$;

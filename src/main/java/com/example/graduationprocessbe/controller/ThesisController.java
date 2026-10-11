@@ -163,14 +163,30 @@ public class ThesisController {
     @GetMapping("/{id}/submissions")
     public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> submissions(@PathVariable String id) {
         String processId = thesisProcessService.getThesis(id).getProcessInstanceId();
-        var rows = jdbc.queryForList("SELECT s.id,s.step_key,s.content,s.attachment_url,s.submitted_at,u.full_name AS submitted_by FROM thesis_submissions s JOIN users u ON u.id=s.submitted_by WHERE s.thesis_id=? ORDER BY s.submitted_at",id);
+        var rows = jdbc.queryForList("SELECT s.id,s.step_key,s.content,s.explanation,s.signature,s.attachment_url,s.submitted_at,u.full_name AS submitted_by FROM thesis_submissions s JOIN users u ON u.id=s.submitted_by WHERE s.thesis_id=? ORDER BY s.submitted_at",id);
         rows.forEach(row -> row.put("step_name", presentation.stepLabel(processId, (String)row.get("step_key"))));
+        return ok(rows);
+    }
+    /** Reviewed records, newest first. Faculty/admin see every thesis; a lecturer only sees the theses they supervise. */
+    @GetMapping("/reviews")
+    @PreAuthorize("hasAnyRole('ADMIN','FACULTY_STAFF','LECTURER')")
+    public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> reviews(@RequestParam List<String> stepKeys) {
+        if (stepKeys.isEmpty() || stepKeys.size() > 20) throw new IllegalArgumentException("Danh sách bước không hợp lệ");
+        var actor=currentUserService.getCurrentUser().orElseThrow();
+        boolean seesAll="ADMIN".equals(actor.getUserType()) || actorHasFacultyRole(actor.getId(),null);
+        String marks = String.join(",", java.util.Collections.nCopies(stepKeys.size(), "?"));
+        List<Object> params = new java.util.ArrayList<>(stepKeys);
+        if (!seesAll) params.add(actor.getId());
+        var rows = jdbc.queryForList("SELECT f.id,f.step_key,f.approved,f.comment,f.signature,f.reviewed_at,u.full_name AS reviewer,t.id AS thesis_id,t.title AS thesis_title,s.full_name AS student_name "
+                + "FROM thesis_feedback f JOIN users u ON u.id=f.reviewer_id JOIN theses t ON t.id=f.thesis_id JOIN users s ON s.id=t.student_id "
+                + "WHERE f.step_key IN (" + marks + ")" + (seesAll ? "" : " AND t.lecturer_id=?")
+                + " ORDER BY f.reviewed_at DESC LIMIT 200", params.toArray());
         return ok(rows);
     }
     @GetMapping("/{id}/feedback")
     public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> feedback(@PathVariable String id) {
         String processId = thesisProcessService.getThesis(id).getProcessInstanceId();
-        var rows = jdbc.queryForList("SELECT f.id,f.step_key,f.approved,f.comment,f.reviewed_at,u.full_name AS reviewer FROM thesis_feedback f JOIN users u ON u.id=f.reviewer_id WHERE f.thesis_id=? ORDER BY f.reviewed_at",id);
+        var rows = jdbc.queryForList("SELECT f.id,f.step_key,f.approved,f.comment,f.signature,f.reviewed_at,u.full_name AS reviewer FROM thesis_feedback f JOIN users u ON u.id=f.reviewer_id WHERE f.thesis_id=? ORDER BY f.reviewed_at",id);
         rows.forEach(row -> row.put("step_name", presentation.stepLabel(processId, (String)row.get("step_key"))));
         return ok(rows);
     }
