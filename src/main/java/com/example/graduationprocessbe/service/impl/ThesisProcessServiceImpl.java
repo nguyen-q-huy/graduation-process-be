@@ -277,7 +277,7 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
                         "Thesis not found for process instance: " + task.getProcessInstanceId()));
         permissionGuard.require("TASKS_UPDATE",thesis.getPhaseId());
         Map<String,Object> vars=new HashMap<>();
-        if (variables!=null) for (String key:List.of("content","attachmentUrl","approved","comment","defenseAt","room","councilName","notes")) {
+        if (variables!=null) for (String key:List.of("content","attachmentUrl","title","explanation","signature","approved","comment","defenseAt","room","councilName","notes")) {
             if (variables.containsKey(key)) vars.put(key,variables.get(key));
         }
         List<Map<String,Object>> step=jdbc.queryForList("SELECT ws.kind FROM workflow_steps ws JOIN workflow_templates wt ON wt.id=ws.template_id WHERE wt.process_definition_id=? AND ws.step_key=?",task.getProcessDefinitionId(),task.getTaskDefinitionKey());
@@ -289,15 +289,45 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
                 if (!"submitProposal".equals(task.getTaskDefinitionKey())) checkStepWindow(thesis.getPhaseId(),task.getTaskDefinitionKey());
                 Object content=vars.get("content");
                 if (!(content instanceof String text) || text.isBlank()) throw new IllegalArgumentException("Cần nội dung hoặc liên kết hồ sơ nộp");
-                jdbc.update("INSERT INTO thesis_submissions(id,thesis_id,step_key,submitted_by,content,attachment_url) VALUES(?,?,?,?,?,?)",
-                    UUID.randomUUID().toString(),thesis.getId(),task.getTaskDefinitionKey(),actor.getId(),content,vars.get("attachmentUrl"));
+                boolean signedStep="submitSignedProposal".equals(task.getTaskDefinitionKey());
+                Object studentSignature=vars.get("signature");
+                if (signedStep) {
+                    // The lecturer already approved this text: it can no longer change, the student only signs and sends it.
+                    List<String> approvedText=jdbc.queryForList("SELECT content FROM thesis_submissions WHERE thesis_id=? AND step_key IN ('submitProposal','reviseProposal') ORDER BY submitted_at DESC LIMIT 1",String.class,thesis.getId());
+                    if (approvedText.isEmpty() || !approvedText.getFirst().equals(content))
+                        throw new IllegalArgumentException("Đề cương đã được giảng viên duyệt, không được thay đổi nội dung");
+                    if (vars.get("title") instanceof String requested && !requested.trim().equals(thesis.getTitle()))
+                        throw new IllegalArgumentException("Đề cương đã được giảng viên duyệt, không được đổi tên đề tài");
+                    if (!(studentSignature instanceof String sig && sig.startsWith("data:image/png;base64,") && sig.length()<=400_000))
+                        throw new IllegalArgumentException("Cần chữ ký của sinh viên trước khi gửi");
+                }
+                Object explanation=vars.get("explanation");
+                boolean revision=List.of("submitProposal","reviseProposal").contains(task.getTaskDefinitionKey());
+                if (revision && (!(explanation instanceof String why) || why.isBlank())) throw new IllegalArgumentException("Cần giải trình nội dung đã chỉnh sửa");
+                jdbc.update("INSERT INTO thesis_submissions(id,thesis_id,step_key,submitted_by,content,attachment_url,explanation,signature) VALUES(?,?,?,?,?,?,?,?)",
+                    UUID.randomUUID().toString(),thesis.getId(),task.getTaskDefinitionKey(),actor.getId(),content,vars.get("attachmentUrl"),explanation instanceof String reason && !reason.isBlank() ? reason : null,signedStep ? studentSignature : null);
+                // The title may be narrowed while the proposal is being revised (e.g. when it was too broad).
+                if (vars.get("title") instanceof String newTitle && List.of("submitProposal","reviseProposal","submitSignedProposal").contains(task.getTaskDefinitionKey())) {
+                    String trimmed=newTitle.trim();
+                    if (trimmed.isEmpty() || trimmed.length()>255) throw new IllegalArgumentException("Tên đề tài không hợp lệ");
+                    if (!trimmed.equals(thesis.getTitle())) {
+                        vars.put("previousTitle",thesis.getTitle());
+                        thesis.setTitle(trimmed);
+                    }
+                }
             } else if (kind.equals("REVIEW")) {
                 permissionGuard.require("TASKS_APPROVE",thesis.getPhaseId());
                 if (!(vars.get("approved") instanceof Boolean approved)) throw new IllegalArgumentException("Cần chọn duyệt hoặc yêu cầu sửa");
                 String comment=String.valueOf(vars.getOrDefault("comment",""));
                 if (!approved && comment.isBlank()) throw new IllegalArgumentException("Cần ghi rõ nội dung yêu cầu sửa");
-                jdbc.update("INSERT INTO thesis_feedback(id,thesis_id,step_key,reviewer_id,approved,comment) VALUES(?,?,?,?,?,?)",
-                    UUID.randomUUID().toString(),thesis.getId(),task.getTaskDefinitionKey(),actor.getId(),approved,comment);
+                // The supervising lecturer signs when confirming a proposal: a PNG drawn on the signature pad.
+                Object drawn=vars.get("signature");
+                boolean needsSignature="advisorSignature".equals(task.getTaskDefinitionKey()) && approved;
+                if (needsSignature && !(drawn instanceof String img && img.startsWith("data:image/png;base64,")))
+                    throw new IllegalArgumentException("Cần chữ ký xác nhận của giảng viên");
+                if (drawn instanceof String img && img.length()>400_000) throw new IllegalArgumentException("Chữ ký quá lớn");
+                jdbc.update("INSERT INTO thesis_feedback(id,thesis_id,step_key,reviewer_id,approved,comment,signature) VALUES(?,?,?,?,?,?,?)",
+                    UUID.randomUUID().toString(),thesis.getId(),task.getTaskDefinitionKey(),actor.getId(),approved,comment,needsSignature ? drawn : null);
             }
         }
 
@@ -325,7 +355,11 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
                 throw new AccessDeniedException("Chỉ sinh viên được xác nhận đăng ký ĐATN");
             checkStepWindow(thesis.getPhaseId(),"registerThesis");
         }
-        taskService.complete(taskId, vars);
+        Map<String,Object> auditVars=new HashMap<>(vars);
+        auditVars.computeIfPresent("signature", (ignoredKey, ignoredValue) -> "[chữ ký]");
+        Map<String,Object> processVars=new HashMap<>(vars);
+        processVars.remove("title"); processVars.remove("previousTitle"); processVars.remove("explanation"); processVars.remove("signature");
+        taskService.complete(taskId, processVars);
 
         refreshStatus(thesis);
         thesis = thesisRepository.save(thesis);
@@ -335,7 +369,7 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         enqueueNextTask(thesis);
 
         auditLogService.record(task.getProcessInstanceId(), currentUserService.getCurrentUser().orElse(null),
-                "COMPLETE_TASK", task.getTaskDefinitionKey(), vars);
+                "COMPLETE_TASK", task.getTaskDefinitionKey(), auditVars);
         return response(thesis);
     }
 
