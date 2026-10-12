@@ -13,6 +13,10 @@ public class CreateThesisRequest {
     @Size(max = 255, message = "Title must not exceed 255 characters")
     private String title;
 
+    @NotBlank(message = "Cần nhập tên đề tài tiếng Anh")
+    @Size(max = 255, message = "English title must not exceed 255 characters")
+    private String titleEn;
+
     @NotBlank(message = "Student ID is required")
     private String studentId;
 

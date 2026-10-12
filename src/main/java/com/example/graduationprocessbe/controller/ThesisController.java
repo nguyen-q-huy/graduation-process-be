@@ -141,6 +141,16 @@ public class ThesisController {
                 page, size, sortBy, direction));
     }
 
+    @PostMapping("/{id}/proposal-signature")
+    public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> signProposal(@PathVariable String id, @RequestBody Map<String,String> body) {
+        return ok(thesisProcessService.signProposal(id, body.get("signature")));
+    }
+
+    @GetMapping("/{id}/proposal-signatures")
+    public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> proposalSignatures(@PathVariable String id) {
+        return ok(thesisProcessService.proposalSignatures(id));
+    }
+
     @GetMapping("/{id}/members")
     public ResponseEntity<ApiResponseWrapper<List<MemberResponse>>> getMembers(@PathVariable String id) {
         thesisProcessService.getThesis(id);
@@ -163,7 +173,7 @@ public class ThesisController {
     @GetMapping("/{id}/submissions")
     public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> submissions(@PathVariable String id) {
         String processId = thesisProcessService.getThesis(id).getProcessInstanceId();
-        var rows = jdbc.queryForList("SELECT s.id,s.step_key,s.content,s.explanation,s.signature,s.attachment_url,s.submitted_at,u.full_name AS submitted_by FROM thesis_submissions s JOIN users u ON u.id=s.submitted_by WHERE s.thesis_id=? ORDER BY s.submitted_at",id);
+        var rows = jdbc.queryForList("SELECT s.id,s.step_key,s.content,s.explanation,s.signature,s.signature2,s.attachment_url,s.submitted_at,u.full_name AS submitted_by FROM thesis_submissions s JOIN users u ON u.id=s.submitted_by WHERE s.thesis_id=? ORDER BY s.submitted_at",id);
         rows.forEach(row -> row.put("step_name", presentation.stepLabel(processId, (String)row.get("step_key"))));
         return ok(rows);
     }

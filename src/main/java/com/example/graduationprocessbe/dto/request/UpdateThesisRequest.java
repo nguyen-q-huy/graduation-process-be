@@ -15,6 +15,9 @@ public class UpdateThesisRequest {
     @Size(max = 255, message = "Title must not exceed 255 characters")
     private String title;
 
+    @Size(max = 255, message = "English title must not exceed 255 characters")
+    private String titleEn;
+
     private String description;
 
     private String lecturerId;

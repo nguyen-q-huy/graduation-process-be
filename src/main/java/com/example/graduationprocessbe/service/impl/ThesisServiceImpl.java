@@ -90,6 +90,9 @@ public class ThesisServiceImpl implements ThesisService {
         if (request.getTitle() != null) {
             thesis.setTitle(request.getTitle());
         }
+        if (request.getTitleEn() != null) {
+            thesis.setTitleEn(request.getTitleEn().isBlank() ? null : request.getTitleEn().trim());
+        }
         if (request.getDescription() != null) {
             thesis.setDescription(request.getDescription());
         }

@@ -39,6 +39,19 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponseWrapper<String>> invalidReference(Exception ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT).body(new ApiResponseWrapper<>("FAILURE","DATA_CONFLICT","Dữ liệu bị trùng hoặc còn được tham chiếu",null));
     }
+    @ExceptionHandler(DocumentGenerationException.class)
+    public ResponseEntity<ApiResponseWrapper<String>> handleDocumentGeneration(
+            DocumentGenerationException ex,
+            HttpServletRequest request) {
+
+        log.error("Document generation failed - Path: {}", request.getRequestURI(), ex);
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(new ApiResponseWrapper<>(
+                "FAILURE",
+                "DOCUMENT_GENERATION_FAILED",
+                ex.getMessage(),
+                null));
+    }
+
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<ApiResponseWrapper<String>> handleResourceNotFound(
             ResourceNotFoundException ex,
