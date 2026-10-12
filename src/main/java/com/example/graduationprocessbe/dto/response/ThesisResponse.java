@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 public class ThesisResponse {
     private String id;
     private String title;
+    private String titleEn;
     private String description;
     private UserResponse student;
     private UserResponse lecturer;

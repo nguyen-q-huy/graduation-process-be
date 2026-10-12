@@ -1050,7 +1050,7 @@ BEGIN
       SELECT gen_random_uuid()::text,'core-template-v2',v.step_key,v.label,v.sort_order,v.kind,v.assignee_role,v.due_days,v.next_key,v.reject_key
       FROM (VALUES
         ('submitProposal','Sinh viên nộp đề cương',1,'SUBMIT','STUDENT',NULL::integer,NULL::varchar,NULL::varchar),
-        ('reviewProposal','Khoa kiểm tra và phản hồi đề cương',2,'REVIEW','FACULTY_STAFF',5,NULL::varchar,'submitProposal'),
+        ('reviewProposal','Khoa kiểm tra và phản hồi đề cương',2,'REVIEW','FACULTY_STAFF',5,'advisorSignature'::varchar,'reviseProposal'),
         ('reviseProposal','Sinh viên hoàn thiện đề cương theo phản hồi',3,'SUBMIT','STUDENT',NULL::integer,NULL::varchar,NULL::varchar),
         ('advisorSignature','Giảng viên xác nhận đề cương',4,'REVIEW','LECTURER',5,NULL::varchar,'reviseProposal'),
         ('submitSignedProposal','Sinh viên nộp đề cương đã xác nhận',5,'SUBMIT','STUDENT',NULL::integer,NULL::varchar,NULL::varchar),
@@ -1526,3 +1526,35 @@ BEGIN
     UPDATE roles SET permissions_version=permissions_version+1 WHERE role_code='ADMIN';
     INSERT INTO app_seed_versions(version) VALUES('document-templates-v1');
 END $document_templates_v1$;
+
+-- Optional English title of a thesis (shown on the exported proposal / explanation).
+DO $thesis_title_en_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261012,1);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='thesis-title-en-v1') THEN RETURN; END IF;
+    ALTER TABLE theses ADD COLUMN IF NOT EXISTS title_en varchar(255);
+    INSERT INTO app_seed_versions(version) VALUES('thesis-title-en-v1');
+END $thesis_title_en_v1$;
+
+-- Each student of a group signs the lecturer-approved proposal from their own account; the proposal goes to Faculty once all have signed.
+DO $proposal_signatures_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261012,3);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='proposal-signatures-v1') THEN RETURN; END IF;
+    CREATE TABLE IF NOT EXISTS thesis_proposal_signatures(
+        thesis_id varchar(255) NOT NULL,
+        user_id varchar(255) NOT NULL,
+        signature text NOT NULL,
+        signed_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY(thesis_id,user_id));
+    INSERT INTO app_seed_versions(version) VALUES('proposal-signatures-v1');
+END $proposal_signatures_v1$;
+
+-- Second student's signature (PNG data URL) when a group of two sends the lecturer-approved proposal.
+DO $submission_signature2_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261012,2);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='submission-signature2-v1') THEN RETURN; END IF;
+    ALTER TABLE thesis_submissions ADD COLUMN IF NOT EXISTS signature2 text;
+    INSERT INTO app_seed_versions(version) VALUES('submission-signature2-v1');
+END $submission_signature2_v1$;

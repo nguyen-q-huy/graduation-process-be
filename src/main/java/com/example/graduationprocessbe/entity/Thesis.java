@@ -22,6 +22,9 @@ public class Thesis extends BaseEntity {
     @Column(nullable = false, length = 255)
     private String title;
 
+    @Column(length = 255, name = "title_en")
+    private String titleEn;
+
     @Column(columnDefinition = "TEXT")
     private String description;
 
