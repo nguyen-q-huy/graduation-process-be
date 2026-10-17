@@ -15,14 +15,6 @@ public interface ThesisProcessService {
     ThesisResponse submitProposal(String thesisId, String content);
     ThesisResponse confirmGuidance(String thesisId, boolean approved, String comment);
 
-    /**
-     * Moves proposals that Faculty sent back ("needs changes") but that sit at the first submission step on to the
-     * revision step. Returns how many proposals were moved.
-     */
-    int redirectReturnedProposalsToRevision();
-
-    /** Moves proposals Faculty approved but that were routed to the revision step on to the lecturer's confirmation. */
-    int redirectApprovedProposalsToLecturer();
     ThesisResponse resubmitRegistration(String thesisId, String title, String lecturerId);
 
     ThesisResponse getThesis(String thesisId);

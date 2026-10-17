@@ -175,9 +175,9 @@ public class CoreWorkflowService {
     }
     @Transactional
     public void replaceSteps(String templateId, List<StepInput> steps) {
-        String status=jdbc.queryForObject("SELECT status FROM workflow_templates WHERE id=?",String.class,templateId);
+        String status=jdbc.queryForObject("SELECT status FROM workflow_templates WHERE id=? FOR UPDATE",String.class,templateId);
         if (!"DRAFT".equals(status)) throw new IllegalArgumentException("Chỉ được sửa bản nháp; hãy sao chép phiên bản đã công bố");
-        if (steps == null || steps.size()<2 || steps.size()>30 || !"submitProposal".equals(steps.getFirst().key())
+        if (steps == null || steps.stream().anyMatch(java.util.Objects::isNull) || steps.size()<2 || steps.size()>30 || !"submitProposal".equals(steps.getFirst().key())
                 || !"SUBMIT".equals(steps.getFirst().kind()) || !"STUDENT".equals(steps.getFirst().role()))
             throw new IllegalArgumentException("Quy trình phải bắt đầu bằng bước sinh viên nộp đề cương");
         if (steps.stream().anyMatch(s -> s.key()==null || s.label()==null || s.kind()==null || s.role()==null))
@@ -186,10 +186,14 @@ public class CoreWorkflowService {
         if (keys.stream().distinct().count() != keys.size()) throw new IllegalArgumentException("Mã bước bị trùng");
         if (steps.stream().anyMatch(s -> "start".equals(s.key()) || "end".equals(s.key()) || s.key().startsWith("gate_") || s.key().startsWith("f_")))
             throw new IllegalArgumentException("Mã bước trùng mã hệ thống Flowable");
-        if (steps.stream().anyMatch(s -> "scheduleDefense".equals(s.key()) && !"FACULTY_STAFF".equals(s.role())))
+        if (steps.stream().anyMatch(s -> "scheduleDefense".equals(s.key()) && (!"FACULTY_STAFF".equals(s.role()) || !"TASK".equals(s.kind()))))
             throw new IllegalArgumentException("Bước lập lịch bảo vệ phải do Khoa xử lý");
-        if (steps.stream().anyMatch(s -> "confirmGuidance".equals(s.key()) && !"LECTURER".equals(s.role())))
+        if (steps.stream().anyMatch(s -> List.of("confirmGuidance", "advisorSignature").contains(s.key()) && (!"LECTURER".equals(s.role()) || !"REVIEW".equals(s.kind()))))
             throw new IllegalArgumentException("Bước xác nhận hướng dẫn phải do giảng viên xử lý");
+        if (steps.stream().anyMatch(s -> List.of("reviseProposal", "submitSignedProposal").contains(s.key())
+                && (!"SUBMIT".equals(s.kind()) || !"STUDENT".equals(s.role()))
+                || "registerThesis".equals(s.key()) && (!"TASK".equals(s.kind()) || !"STUDENT".equals(s.role()))))
+            throw new IllegalArgumentException("Bước nghiệp vụ sinh viên phải giữ đúng loại và vai trò xử lý");
         jdbc.update("DELETE FROM workflow_steps WHERE template_id=?",templateId);
         for (int i=0;i<steps.size();i++) {
             StepInput s=steps.get(i);
@@ -209,7 +213,7 @@ public class CoreWorkflowService {
     }
     @Transactional
     public String publish(String templateId) {
-        String status=jdbc.queryForObject("SELECT status FROM workflow_templates WHERE id=?",String.class,templateId);
+        String status=jdbc.queryForObject("SELECT status FROM workflow_templates WHERE id=? FOR UPDATE",String.class,templateId);
         if (!"DRAFT".equals(status)) throw new IllegalArgumentException("Phiên bản đã công bố");
         List<Map<String,Object>> steps=steps(templateId);
         if (steps.size()<2) throw new IllegalArgumentException("Quy trình chưa có đủ bước");
@@ -223,6 +227,8 @@ public class CoreWorkflowService {
     }
     @Transactional
     public void assignTemplate(String roundId,String templateId) {
+        if (jdbc.queryForList("SELECT id FROM thesis_rounds WHERE id=? FOR UPDATE",roundId).isEmpty())
+            throw new IllegalArgumentException("Không tìm thấy đợt ĐATN");
         String definition=jdbc.queryForObject("SELECT process_definition_id FROM workflow_templates WHERE id=? AND status='PUBLISHED'",String.class,templateId);
         if (Boolean.TRUE.equals(jdbc.queryForObject("SELECT EXISTS(SELECT 1 FROM theses WHERE phase_id=?)",Boolean.class,roundId)))
             throw new IllegalArgumentException("Đợt đã có hồ sơ; không thể đổi quy trình đang áp dụng");
@@ -258,6 +264,10 @@ public class CoreWorkflowService {
         return xml.append("</process></definitions>").toString();
     }
     private void validateGraph(List<Map<String,Object>> steps) {
+        if (!"submitProposal".equals(steps.getFirst().get("step_key"))
+                || !"SUBMIT".equals(steps.getFirst().get("kind"))
+                || !"STUDENT".equals(steps.getFirst().get("assignee_role")))
+            throw new IllegalArgumentException("Quy trình phải bắt đầu bằng bước sinh viên nộp đề cương");
         var byKey = new java.util.HashMap<String,Map<String,Object>>();
         for (var step : steps) byKey.put((String)step.get("step_key"),step);
         if (!byKey.containsKey("submitProposal")) throw new IllegalArgumentException("Thiếu bước nộp đề cương");
@@ -283,6 +293,21 @@ public class CoreWorkflowService {
             }
         }
         if (!reachesEnd || visited.size()!=steps.size()) throw new IllegalArgumentException("Quy trình có bước không thể tới hoặc không có đường kết thúc");
+        var canFinish = new java.util.HashSet<String>();
+        canFinish.add("end");
+        boolean changed;
+        do {
+            changed = false;
+            for (int i=0;i<steps.size();i++) {
+                var step=steps.get(i);
+                String next=step.get("next_key") instanceof String explicit && !explicit.isBlank()
+                        ? explicit : i+1<steps.size()?(String)steps.get(i+1).get("step_key"):"end";
+                if (canFinish.contains(next) || "REVIEW".equals(step.get("kind")) && canFinish.contains(step.get("reject_key")))
+                    changed |= canFinish.add((String)step.get("step_key"));
+            }
+        } while (changed);
+        if (!canFinish.containsAll(byKey.keySet()))
+            throw new IllegalArgumentException("Quy trình có nhánh mắc kẹt, không có đường tới kết thúc");
     }
     private String flow(String from,String to,String condition) {
         String id="f_"+from+"_"+to;

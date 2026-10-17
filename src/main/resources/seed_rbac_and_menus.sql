@@ -1363,7 +1363,8 @@ BEGIN
     SELECT n,'current','demo.student.'||n,'demo.lecturer',NULL,
       'Hệ thống quản lý học tập - Nhóm '||n,
       'Hồ sơ minh họa các bước nộp, phản hồi, phê duyệt và bảo vệ đồ án.',
-      (ARRAY['reviewProposal','submitProposal','advisorSignature','submitSignedProposal','facultyFinalApproval',
+      -- The rejected proposal waits at reviewProposal's reject_key, not the initial submission.
+      (ARRAY['reviewProposal','reviseProposal','advisorSignature','submitSignedProposal','facultyFinalApproval',
         'registerThesis','confirmGuidance','midtermReport','reviewMidterm','finalReport','advisorFinalReview',
         'submitCouncil','councilAccept','scheduleDefense','COMPLETED'])[n],
       n=2,CASE WHEN n IN (3,9,13) THEN 3 ELSE 0 END

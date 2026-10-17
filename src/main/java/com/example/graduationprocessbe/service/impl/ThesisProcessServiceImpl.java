@@ -66,7 +66,7 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         User student = findUser(request.getStudentId());
         User lecturer = findUser(request.getLecturerId());
         if (!"LECTURER".equals(lecturer.getUserType())) throw new IllegalArgumentException("GVHD phải là giảng viên");
-        List<Map<String,Object>> rounds=jdbc.queryForList("SELECT registration_opens_at,registration_closes_at FROM thesis_rounds WHERE id=? AND active=true",request.getPhaseId());
+        List<Map<String,Object>> rounds=jdbc.queryForList("SELECT registration_opens_at,registration_closes_at FROM thesis_rounds WHERE id=? AND active=true FOR UPDATE",request.getPhaseId());
         if (rounds.isEmpty()) throw new IllegalArgumentException("Đợt ĐATN không hoạt động");
         Map<String,Object> round=rounds.getFirst();
         OffsetDateTime now=OffsetDateTime.now();
@@ -443,12 +443,7 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         Map<String,Object> processVars=new HashMap<>(vars);
         processVars.remove("title"); processVars.remove("titleEn"); processVars.remove("previousTitle"); processVars.remove("explanation"); processVars.remove("signature");
         taskService.complete(taskId, processVars);
-        // Faculty feedback always leads to the revision step, whichever step the review loops back to in the definition.
-        if ("reviewProposal".equals(task.getTaskDefinitionKey()) && Boolean.FALSE.equals(vars.get("approved")))
-            moveToRevision(task.getProcessInstanceId());
-        // Faculty approved straight away: no revision (and no explanation) is needed, so the lecturer confirms next.
-        if ("reviewProposal".equals(task.getTaskDefinitionKey()) && Boolean.TRUE.equals(vars.get("approved")))
-            moveOpenTask(task.getProcessInstanceId(), REVISION_STEP, LECTURER_STEP);
+        // Routing belongs to the published definition selected for this round.
 
         refreshStatus(thesis);
         thesis = thesisRepository.save(thesis);
@@ -460,84 +455,6 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         auditLogService.record(task.getProcessInstanceId(), currentUserService.getCurrentUser().orElse(null),
                 "COMPLETE_TASK", task.getTaskDefinitionKey(), auditVars);
         return response(thesis);
-    }
-
-    private static final String FIRST_SUBMISSION_STEP = "submitProposal";
-    private static final String REVISION_STEP = "reviseProposal";
-    private static final String LECTURER_STEP = "advisorSignature";
-
-    /** Moves the process to {@code to} when it is currently waiting at {@code from}; returns false when there is nothing to move. */
-    private boolean moveOpenTask(String processInstanceId, String from, String to) {
-        boolean waiting = taskService.createTaskQuery().processInstanceId(processInstanceId).active().list().stream()
-                .anyMatch(open -> from.equals(open.getTaskDefinitionKey()));
-        if (!waiting) return false;
-        try {
-            runtimeService.createChangeActivityStateBuilder().processInstanceId(processInstanceId).moveActivityIdTo(from, to).changeState();
-            return true;
-        } catch (RuntimeException ex) {
-            // a definition without that step keeps its own routing
-            log.warn("Could not move process {} from {} to {}", processInstanceId, from, to, ex);
-            return false;
-        }
-    }
-
-    @Override
-    @Transactional
-    public int redirectApprovedProposalsToLecturer() {
-        // Waiting at the revision step although Faculty approved and nothing was sent back since (neither by the lecturer nor by the final approval).
-        List<String> stuck = jdbc.queryForList(
-                "SELECT t.id FROM theses t WHERE t.process_instance_id IS NOT NULL AND t.current_status=? AND EXISTS ("
-                        + "SELECT 1 FROM thesis_feedback f WHERE f.thesis_id=t.id AND f.step_key='reviewProposal' AND f.approved=true "
-                        + "AND f.reviewed_at > coalesce((SELECT max(s.submitted_at) FROM thesis_submissions s WHERE s.thesis_id=t.id),'-infinity') "
-                        + "AND NOT EXISTS(SELECT 1 FROM thesis_feedback g WHERE g.thesis_id=t.id AND g.step_key<>'reviewProposal' AND g.reviewed_at>f.reviewed_at) "
-                        + "AND f.reviewed_at=(SELECT max(h.reviewed_at) FROM thesis_feedback h WHERE h.thesis_id=t.id))",
-                String.class, REVISION_STEP);
-        int moved = 0;
-        for (String thesisId : stuck) {
-            Thesis thesis = findThesis(thesisId);
-            if (!moveOpenTask(thesis.getProcessInstanceId(), REVISION_STEP, LECTURER_STEP)) continue;
-            refreshStatus(thesis);
-            thesisRepository.save(thesis);
-            auditLogService.record(thesis.getProcessInstanceId(), null, "REDIRECT_TO_LECTURER", LECTURER_STEP, Map.of("thesisId", thesisId));
-            moved++;
-        }
-        return moved;
-    }
-
-    /** Moves the open first-submission task of a process to the revision step; returns false when there is nothing to move. */
-    private boolean moveToRevision(String processInstanceId) {
-        boolean waitingAtFirstSubmission = taskService.createTaskQuery().processInstanceId(processInstanceId).active().list().stream()
-                .anyMatch(open -> FIRST_SUBMISSION_STEP.equals(open.getTaskDefinitionKey()));
-        if (!waitingAtFirstSubmission) return false;
-        try {
-            runtimeService.createChangeActivityStateBuilder().processInstanceId(processInstanceId)
-                    .moveActivityIdTo(FIRST_SUBMISSION_STEP, REVISION_STEP).changeState();
-            return true;
-        } catch (RuntimeException ex) {
-            // a definition without the revision step keeps its own routing
-            log.warn("Could not move process {} to {}", processInstanceId, REVISION_STEP, ex);
-            return false;
-        }
-    }
-
-    @Override
-    @Transactional
-    public int redirectReturnedProposalsToRevision() {
-        List<String> stuck = jdbc.queryForList(
-                "SELECT t.id FROM theses t WHERE t.process_instance_id IS NOT NULL AND t.current_status=? AND EXISTS ("
-                        + "SELECT 1 FROM thesis_feedback f WHERE f.thesis_id=t.id AND f.step_key='reviewProposal' AND f.approved=false "
-                        + "AND f.reviewed_at > coalesce((SELECT max(s.submitted_at) FROM thesis_submissions s WHERE s.thesis_id=t.id AND s.step_key=?),'-infinity'))",
-                String.class, FIRST_SUBMISSION_STEP, FIRST_SUBMISSION_STEP);
-        int moved = 0;
-        for (String thesisId : stuck) {
-            Thesis thesis = findThesis(thesisId);
-            if (!moveToRevision(thesis.getProcessInstanceId())) continue;
-            refreshStatus(thesis);
-            thesisRepository.save(thesis);
-            auditLogService.record(thesis.getProcessInstanceId(), null, "REDIRECT_TO_REVISION", REVISION_STEP, Map.of("thesisId", thesisId));
-            moved++;
-        }
-        return moved;
     }
 
     private void enqueueNextTask(Thesis thesis) {
