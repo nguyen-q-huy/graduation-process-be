@@ -274,16 +274,18 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
             if (assignee!=null && !assignee.equals(actor.getId())) throw new AccessDeniedException("Không được xem tác vụ của người khác");
             if (candidateGroup!=null && !roles(actor.getId()).contains(candidateGroup)) throw new AccessDeniedException("Không thuộc nhóm xử lý");
             if (assignee==null && candidateGroup==null) return java.util.stream.Stream.concat(
-                taskService.createTaskQuery().taskAssignee(actor.getId()).active().list().stream(),
+                java.util.stream.Stream.concat(
+                    taskService.createTaskQuery().taskAssignee(actor.getId()).active().list().stream(),
+                    groupTasks(actor)),
                 java.util.stream.Stream.concat(
                     taskService.createTaskQuery().taskCandidateGroupIn(roles(actor.getId())).active().list().stream(),
                     taskService.createTaskQuery().taskCandidateUser(actor.getId()).active().list().stream()))
-                .distinct().filter(task -> canAccessTask(task,actor)).map(this::toTaskResponse).toList();
+                .filter(distinctById()).filter(task -> canAccessTask(task,actor)).map(this::toTaskResponse).toList();
         }
         if (candidateGroup != null && assignee == null && !"ADMIN".equals(actor.getUserType())) return java.util.stream.Stream.concat(
                 taskService.createTaskQuery().taskCandidateGroup(candidateGroup).active().list().stream(),
                 taskService.createTaskQuery().taskAssignee(actor.getId()).active().list().stream())
-                .distinct().filter(task -> task.getAssignee() == null || taskService.getIdentityLinksForTask(task.getId()).stream()
+                .filter(distinctById()).filter(task -> task.getAssignee() == null || taskService.getIdentityLinksForTask(task.getId()).stream()
                         .anyMatch(link -> candidateGroup.equals(link.getGroupId())))
                 .filter(task -> canAccessTask(task, actor)).map(this::toTaskResponse).toList();
         TaskQuery query = taskService.createTaskQuery().active();
@@ -295,6 +297,19 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         }
         return query.orderByTaskCreateTime().asc().list()
                 .stream().filter(task -> canAccessTask(task,actor)).map(this::toTaskResponse).toList();
+    }
+
+    /** Flowable tasks from different queries are different objects even for the same row, so de-duplicate by id. */
+    private static java.util.function.Predicate<Task> distinctById() {
+        java.util.Set<String> seen=new java.util.HashSet<>();
+        return task -> seen.add(task.getId());
+    }
+
+    /** Tasks a groupmate holds are still the whole group's: every unlocked member sees them. */
+    private java.util.stream.Stream<Task> groupTasks(User actor) {
+        if (!"STUDENT".equals(actor.getUserType())) return java.util.stream.Stream.empty();
+        List<String> processIds=groupProcessIds(actor.getId());
+        return processIds.isEmpty() ? java.util.stream.Stream.empty() : taskService.createTaskQuery().processInstanceIdIn(processIds).active().list().stream();
     }
 
     @Override
@@ -312,6 +327,7 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         User actor=currentUserService.getCurrentUser().orElseThrow(() -> new AccessDeniedException("Cần đăng nhập"));
         if (!actor.getId().equals(userId)) throw new AccessDeniedException("Chỉ được nhận việc cho bản thân");
         authorizeTask(task,actor);
+        if (isLockedMember(task,actor.getId())) throw new AccessDeniedException("Trưởng nhóm đã khóa quyền nộp của bạn. Bạn vẫn xem được hồ sơ.");
         permissionGuard.require("TASKS_UPDATE",taskRound(task));
         findUser(userId);
         // Students of one group share their tasks: a member can take over a task another member claimed.
@@ -326,6 +342,7 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         Task task = findTask(taskId);
         User actor=currentUserService.getCurrentUser().orElseThrow(() -> new AccessDeniedException("Cần đăng nhập"));
         authorizeTask(task,actor);
+        if (isLockedMember(task,actor.getId())) throw new AccessDeniedException("Trưởng nhóm đã khóa quyền nộp của bạn. Bạn vẫn xem được hồ sơ.");
         if (!actor.getId().equals(task.getAssignee())) {
             boolean sharedGroupTask = task.getAssignee()!=null && isStudentGroupTask(task) && isGroupMember(task,actor);
             if (!sharedGroupTask) throw new AccessDeniedException("Cần nhận tác vụ trước khi hoàn thành");
@@ -372,6 +389,12 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
                     studentSignature=proposalSignatureOf(thesis.getId(),signers.get(0));
                     secondSignature=signers.size()>1 ? proposalSignatureOf(thesis.getId(),signers.get(1)) : null;
                 }
+                boolean proposalStep=List.of("submitProposal","reviseProposal","submitSignedProposal").contains(task.getTaskDefinitionKey());
+                if (!proposalStep && !(vars.get("attachmentUrl") instanceof String file && !file.isBlank()))
+                    throw new IllegalArgumentException("Cần đính kèm file PDF báo cáo");
+                if (vars.get("attachmentUrl") instanceof String url && url.startsWith("/api/theses/")
+                        && !url.startsWith("/api/theses/"+thesis.getId()+"/attachments/"))
+                    throw new IllegalArgumentException("File đính kèm không thuộc đề tài này");
                 Object explanation=vars.get("explanation");
                 boolean revision=List.of("submitProposal","reviseProposal").contains(task.getTaskDefinitionKey());
                 if (revision && (!(explanation instanceof String why) || why.isBlank())) throw new IllegalArgumentException("Cần giải trình nội dung đã chỉnh sửa");
@@ -556,6 +579,17 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         return groupStudentIds(task).contains(actor.getId());
     }
 
+    /** The group leader can lock a member out of submitting (members.locked): they still see everything. */
+    private boolean isLockedMember(Task task,String userId) {
+        Integer locked=jdbc.queryForObject("SELECT count(*) FROM members m JOIN theses t ON t.id=m.thesis_id WHERE t.process_instance_id=? AND m.user_id=? AND m.locked=true",Integer.class,task.getProcessInstanceId(),userId);
+        return locked!=null && locked>0;
+    }
+
+    /** Process instances of the theses the student leads or belongs to. */
+    private List<String> groupProcessIds(String userId) {
+        return jdbc.queryForList("SELECT t.process_instance_id FROM theses t WHERE t.process_instance_id IS NOT NULL AND (t.student_id=? OR EXISTS (SELECT 1 FROM members m WHERE m.thesis_id=t.id AND m.user_id=?))",String.class,userId,userId);
+    }
+
     /** A student task is one held by, or offered to, the students of the group. */
     private boolean isStudentGroupTask(Task task) {
         List<String> students = groupStudentIds(task);
@@ -581,7 +615,8 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
     private void authorizeThesis(Thesis thesis) {
         User actor=currentUserService.getCurrentUser().orElseThrow(() -> new AccessDeniedException("Cần đăng nhập"));
         if ("ADMIN".equals(actor.getUserType()) || thesis.getStudent().getId().equals(actor.getId())
-                || thesis.getLecturer().getId().equals(actor.getId()) || hasRoleForRound(actor.getId(),"FACULTY_STAFF",thesis.getPhaseId())) return;
+                || thesis.getLecturer().getId().equals(actor.getId()) || hasRoleForRound(actor.getId(),"FACULTY_STAFF",thesis.getPhaseId())
+                || hasRoleForRound(actor.getId(),"COMMITTEE",thesis.getPhaseId())) return;
         Integer member=jdbc.queryForObject("SELECT count(*) FROM members WHERE thesis_id=? AND user_id=?",Integer.class,thesis.getId(),actor.getId());
         if (member!=null && member>0) return;
         throw new AccessDeniedException("Không được xem hồ sơ này");
@@ -612,7 +647,7 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         List<String> kinds=jdbc.queryForList("SELECT ws.kind FROM workflow_steps ws JOIN workflow_templates wt ON wt.id=ws.template_id WHERE wt.process_definition_id=? AND ws.step_key=?",String.class,task.getProcessDefinitionId(),task.getTaskDefinitionKey());
         if (!kinds.isEmpty()) response.setKind(kinds.getFirst());
         if (task.getDueDate()!=null) response.setDueDate(task.getDueDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
-        var cases = jdbc.queryForList("SELECT t.id,t.title,s.full_name AS student_name FROM theses t JOIN users s ON s.id=t.student_id WHERE t.process_instance_id=?", task.getProcessInstanceId());
+        var cases = jdbc.queryForList("SELECT t.id,t.title,coalesce((SELECT string_agg(u.full_name, ', ' ORDER BY (u.id=t.student_id) DESC, u.full_name) FROM members m JOIN users u ON u.id=m.user_id WHERE m.thesis_id=t.id),s.full_name) AS student_name FROM theses t JOIN users s ON s.id=t.student_id WHERE t.process_instance_id=?", task.getProcessInstanceId());
         if (!cases.isEmpty()) {
             var item = cases.getFirst();
             response.setThesisId((String)item.get("id"));
@@ -623,8 +658,14 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
             var names = jdbc.queryForList("SELECT full_name FROM users WHERE id=?", String.class, task.getAssignee());
             if (!names.isEmpty()) response.setAssigneeName(names.getFirst());
         }
-        boolean write=permissionGuard.allowed("TASKS_UPDATE",taskRound(task));
         User actor=currentUserService.getCurrentUser().orElseThrow();
+        // A locked groupmate keeps read access but cannot claim or complete.
+        boolean locked=isLockedMember(task,actor.getId());
+        boolean write=permissionGuard.allowed("TASKS_UPDATE",taskRound(task)) && !locked;
+        if (locked) {
+            List<String> leaders=jdbc.queryForList("SELECT u.full_name FROM theses t JOIN users u ON u.id=t.student_id WHERE t.process_instance_id=?",String.class,task.getProcessInstanceId());
+            response.setLockedBy(leaders.isEmpty() ? "trưởng nhóm" : leaders.getFirst());
+        }
         boolean groupMemberHoldingTask = task.getAssignee()!=null && !actor.getId().equals(task.getAssignee()) && isGroupMember(task,actor) && isStudentGroupTask(task);
         response.setCanClaim(write && (task.getAssignee()==null || groupMemberHoldingTask) && canAccessTask(task,actor));
         response.setCanComplete(write && (actor.getId().equals(task.getAssignee()) || groupMemberHoldingTask)

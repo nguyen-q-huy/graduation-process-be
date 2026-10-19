@@ -25,6 +25,12 @@ public interface ThesisService {
 
     List<MemberResponse> removeMember(String thesisId, String userId);
 
+    /** The group leader locks (or unlocks) another member of the group. */
+    List<MemberResponse> setMemberLocked(String thesisId, String userId, boolean locked);
+
+    /** The advising lecturer, Faculty staff or an admin hand the group leadership to another member of the group. */
+    List<MemberResponse> changeLeader(String thesisId, String newLeaderId);
+
     /** Các bước process đã và đang đi qua, theo thứ tự thời gian. */
     List<ActivityHistoryResponse> getHistory(String thesisId);
 }
