@@ -45,6 +45,7 @@ public class ThesisServiceImpl implements ThesisService {
     private final ThesisMapper thesisMapper;
     private final UserMapper userMapper;
     private final RuntimeService runtimeService;
+    private final org.flowable.engine.TaskService taskService;
     private final HistoryService historyService;
     private final WorkflowPresentationService presentation;
     private final com.example.graduationprocessbe.service.PermissionGuard permissionGuard;
@@ -170,6 +171,48 @@ public class ThesisServiceImpl implements ThesisService {
     }
 
     @Override
+    @Transactional
+    public List<MemberResponse> setMemberLocked(String thesisId, String userId, boolean locked) {
+        Thesis thesis = find(thesisId);
+        var actor = currentUser.getCurrentUser().orElseThrow(() -> new org.springframework.security.access.AccessDeniedException("Cần đăng nhập"));
+        String leaderId = thesis.getStudent().getId();
+        if (!"ADMIN".equals(actor.getUserType()) && !leaderId.equals(actor.getId()))
+            throw new org.springframework.security.access.AccessDeniedException("Chỉ trưởng nhóm được khóa hoặc mở khóa thành viên");
+        if (leaderId.equals(userId)) throw new IllegalArgumentException("Không thể khóa trưởng nhóm");
+        Member member = memberRepository.findById(new MemberId(userId, thesisId))
+                .orElseThrow(() -> new ResourceNotFoundException("User " + userId + " is not a member of thesis " + thesisId));
+        member.setLocked(locked);
+        memberRepository.save(member);
+        // Work the locked member was holding goes back to the leader so the group is never stuck.
+        if (locked && thesis.getProcessInstanceId() != null)
+            taskService.createTaskQuery().processInstanceId(thesis.getProcessInstanceId()).taskAssignee(userId).active().list()
+                    .forEach(task -> taskService.setAssignee(task.getId(), leaderId));
+        return membersOf(thesisId);
+    }
+
+    @Override
+    @Transactional
+    public List<MemberResponse> changeLeader(String thesisId, String newLeaderId) {
+        Thesis thesis = find(thesisId);
+        var actor = currentUser.getCurrentUser().orElseThrow(() -> new org.springframework.security.access.AccessDeniedException("Cần đăng nhập"));
+        Integer faculty=jdbc.queryForObject("SELECT count(*) FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=? AND r.role_code='FACULTY_STAFF' AND (ur.thesis_round_id IS NULL OR ur.thesis_round_id=?)",Integer.class,actor.getId(),thesis.getPhaseId());
+        if (!"ADMIN".equals(actor.getUserType()) && !thesis.getLecturer().getId().equals(actor.getId()) && (faculty==null || faculty==0))
+            throw new org.springframework.security.access.AccessDeniedException("Chỉ giảng viên hướng dẫn hoặc Khoa được đổi trưởng nhóm");
+        if (thesis.getStudent().getId().equals(newLeaderId)) throw new IllegalArgumentException("Sinh viên này đã là trưởng nhóm");
+        Member member = memberRepository.findById(new MemberId(newLeaderId, thesisId))
+                .orElseThrow(() -> new IllegalArgumentException("Trưởng nhóm mới phải là thành viên của nhóm"));
+        User newLeader = userRepository.findById(newLeaderId)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + newLeaderId));
+        thesis.setStudent(newLeader);
+        thesisRepository.save(thesis);
+        member.setLocked(false); // the leader can never be locked
+        memberRepository.save(member);
+        if (thesis.getProcessInstanceId() != null)
+            runtimeService.setVariable(thesis.getProcessInstanceId(), "studentEmail", newLeader.getEmail());
+        return membersOf(thesisId);
+    }
+
+    @Override
     @Transactional(readOnly = true)
     public List<ActivityHistoryResponse> getHistory(String thesisId) {
         Thesis thesis = find(thesisId);
@@ -190,7 +233,7 @@ public class ThesisServiceImpl implements ThesisService {
     private List<MemberResponse> membersOf(String thesisId) {
         return memberRepository.findByThesisId(thesisId).stream()
                 .map(m -> new MemberResponse(m.getUserId(), m.getThesisId(),
-                        userRepository.findById(m.getUserId()).map(userMapper::toResponse).orElse(null)))
+                        userRepository.findById(m.getUserId()).map(userMapper::toResponse).orElse(null), m.isLocked()))
                 .toList();
     }
 

@@ -769,7 +769,7 @@ BEGIN
     -- Keep the three existing RBAC screens exactly as they are.
     SELECT array_agg(code) INTO removed_codes FROM menus WHERE code NOT IN (
         'tong-quan','tim-giang-vien-de-tai','ds-giang-vien',
-        'do-an-cua-toi','dang-ky-de-tai','tien-trinh-do-an','ho-so-da-nop',
+        'do-an-cua-toi','dang-ky-de-tai','tien-trinh-do-an','do-an-da-thuc-hien','nop-bao-cao',
         'ho-so-de-tai-giang-vien','ho-so-giang-vien','huong-dan-do-an','sinh-vien-huong-dan','ho-so-cho-duyet',
         'dot-do-an','nam-hoc','hoc-ky','ds-dot-do-an',
         'ho-so-tien-do','ds-ho-so-tien-do','duyet-de-cuong','trung-lap',
@@ -800,9 +800,22 @@ BEGIN
     UPDATE menus SET label='Giảng viên tham gia ĐATN' WHERE code='tim-giang-vien-de-tai';
     UPDATE menus SET label='Danh sách giảng viên' WHERE code='ds-giang-vien';
     UPDATE menus SET label='Hồ sơ đồ án của tôi' WHERE code='do-an-cua-toi';
-    UPDATE menus SET label='Đăng ký đề tài & nộp đề cương' WHERE code='dang-ky-de-tai';
-    UPDATE menus SET label='Tiến trình và hạn nộp' WHERE code='tien-trinh-do-an';
-    UPDATE menus SET label='Các lần nộp & phản hồi' WHERE code='ho-so-da-nop';
+    UPDATE menus SET label='Đăng ký đề tài' WHERE code='dang-ky-de-tai';
+    UPDATE menus SET label='Đồ án đang thực hiện' WHERE code='tien-trinh-do-an';
+    -- Group leader can lock a groupmate out of the thesis.
+    ALTER TABLE members ADD COLUMN IF NOT EXISTS locked boolean NOT NULL DEFAULT false;
+    -- Student screen listing all of the student's theses as cards.
+    INSERT INTO menus (id, parent_id, code, label, icon, path, sort_order, permission_code, active, created_date, last_modified_date)
+    SELECT gen_random_uuid()::text, parent.id, 'do-an-da-thuc-hien', 'Danh sách đồ án', 'CheckSquareOutlined', '/student/history', 33, 'VIEW_TIEN_TRINH_DO_AN', true, now(), now()
+    FROM menus parent WHERE parent.code='do-an-cua-toi'
+    ON CONFLICT (code) DO UPDATE SET parent_id=EXCLUDED.parent_id, label=EXCLUDED.label, icon=EXCLUDED.icon,
+        path=EXCLUDED.path, sort_order=EXCLUDED.sort_order, permission_code=EXCLUDED.permission_code, active=true, last_modified_date=now();
+    -- Student screen for completing SUBMIT steps (midterm/final report, optional PDF attachment).
+    INSERT INTO menus (id, parent_id, code, label, icon, path, sort_order, permission_code, active, created_date, last_modified_date)
+    SELECT gen_random_uuid()::text, parent.id, 'nop-bao-cao', 'Nộp báo cáo', 'UploadOutlined', '/student/submit', 34, 'VIEW_TAC_VU_QUY_TRINH', true, now(), now()
+    FROM menus parent WHERE parent.code='do-an-cua-toi'
+    ON CONFLICT (code) DO UPDATE SET parent_id=EXCLUDED.parent_id, label=EXCLUDED.label, icon=EXCLUDED.icon,
+        path=EXCLUDED.path, sort_order=EXCLUDED.sort_order, permission_code=EXCLUDED.permission_code, active=true, last_modified_date=now();
     UPDATE menus SET label='Giảng viên hướng dẫn' WHERE code='ho-so-de-tai-giang-vien';
     UPDATE menus SET label='Công việc GVHD' WHERE code='ho-so-cho-duyet';
     UPDATE menus SET label='Duyệt hồ sơ Khoa' WHERE code='ho-so-tien-do';

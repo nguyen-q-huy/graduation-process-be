@@ -117,7 +117,27 @@ public class MenuServiceImpl implements MenuService {
         String actor = users.findById(userId).orElseThrow().getUserType();
         Set<String> governed = new HashSet<>(jdbc.queryForList("SELECT DISTINCT menu_code FROM menu_actor_visibility", String.class));
         Set<String> visible = new HashSet<>(jdbc.queryForList("SELECT menu_code FROM menu_actor_visibility WHERE user_type=?", String.class, actor));
-        return permitted.stream().filter(root -> !governed.contains(root.getCode()) || visible.contains(root.getCode())).toList();
+        List<MenuResponse> result = permitted.stream().filter(root -> !governed.contains(root.getCode()) || visible.contains(root.getCode())).toList();
+        if ("STUDENT".equals(actor)) lockProgressUntilGuidance(result, userId, roundId);
+        return result;
+    }
+
+    /** "Đồ án đang thực hiện" stays disabled until the supervising lecturer has confirmed guidance for the student's thesis. */
+    private void lockProgressUntilGuidance(List<MenuResponse> nodes, String userId, String roundId) {
+        String sql = "SELECT count(*) FROM theses t WHERE (t.guidance_approved = true OR (t.process_instance_id IS NOT NULL AND t.current_status NOT IN "
+                + "('submitProposal','reviewProposal','reviseProposal','advisorSignature','submitSignedProposal','facultyFinalApproval','registerThesis','confirmGuidance','GUIDANCE_REJECTED'))) "
+                + "AND (t.student_id = ? OR EXISTS (SELECT 1 FROM members m WHERE m.thesis_id = t.id AND m.user_id = ?))"
+                + (roundId == null ? "" : " AND t.phase_id = ?");
+        Object[] args = roundId == null ? new Object[]{userId, userId} : new Object[]{userId, userId, roundId};
+        Integer confirmed = jdbc.queryForObject(sql, Integer.class, args);
+        markProgress(nodes, confirmed == null || confirmed == 0);
+    }
+
+    private void markProgress(List<MenuResponse> nodes, boolean locked) {
+        for (MenuResponse node : nodes) {
+            if ("tien-trinh-do-an".equals(node.getCode())) node.setDisabled(locked);
+            if (node.getChildren() != null) markProgress(node.getChildren(), locked);
+        }
     }
 
     @Override

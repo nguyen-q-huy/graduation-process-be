@@ -170,6 +170,18 @@ public class ThesisController {
             @PathVariable String id, @PathVariable String userId) {
         return ok(thesisService.removeMember(id, userId));
     }
+    /** Group leader only (checked in the service): body {"locked": true|false}. */
+    @PutMapping("/{id}/members/{userId}/lock")
+    public ResponseEntity<ApiResponseWrapper<List<MemberResponse>>> lockMember(
+            @PathVariable String id, @PathVariable String userId, @RequestBody Map<String, Boolean> body) {
+        return ok(thesisService.setMemberLocked(id, userId, Boolean.TRUE.equals(body.get("locked"))));
+    }
+    /** Advising lecturer / admin only (checked in the service): body {"userId": "<new leader>"}. */
+    @PutMapping("/{id}/leader")
+    public ResponseEntity<ApiResponseWrapper<List<MemberResponse>>> changeLeader(
+            @PathVariable String id, @RequestBody Map<String, String> body) {
+        return ok(thesisService.changeLeader(id, body.get("userId")));
+    }
     @GetMapping("/{id}/submissions")
     public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> submissions(@PathVariable String id) {
         String processId = thesisProcessService.getThesis(id).getProcessInstanceId();

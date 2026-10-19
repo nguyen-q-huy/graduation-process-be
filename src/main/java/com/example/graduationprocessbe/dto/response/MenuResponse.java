@@ -26,6 +26,8 @@ public class MenuResponse {
     private Integer sortOrder;
     private String permissionCode;
     private Boolean active;
+    /** Shown but not clickable (e.g. a student's "in progress" page before the supervisor confirms guidance). */
+    private Boolean disabled;
     @Builder.Default
     private List<MenuResponse> children = new ArrayList<>();
 }

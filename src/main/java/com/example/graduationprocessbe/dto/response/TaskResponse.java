@@ -26,6 +26,8 @@ public class TaskResponse {
     private LocalDateTime createTime;
     private String kind;
     private LocalDateTime dueDate;
+    /** Set when the group leader has locked the caller out of submitting: the leader's name. */
+    private String lockedBy;
 
     public TaskResponse(String id,String name,String taskDefinitionKey,String assignee,String processInstanceId,LocalDateTime createTime) {
         this.id=id; this.name=name; this.taskDefinitionKey=taskDefinitionKey; this.assignee=assignee;
