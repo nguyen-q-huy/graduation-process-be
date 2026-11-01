@@ -24,6 +24,7 @@ public class CoreWorkflowController {
     private final CoreWorkflowService core;
     private final RoundMailManagementService roundMail;
     private final CurrentUserService currentUser;
+    private final tools.jackson.databind.json.JsonMapper jsonMapper;
 
     public record YearInput(String code,int startYear,LocalDate startsOn,LocalDate endsOn) {}
     public record SemesterInput(String academicYearId,int number,LocalDate startsOn,LocalDate endsOn) {}
@@ -128,6 +129,11 @@ public class CoreWorkflowController {
     @PutMapping("/templates/{id}/steps") @PreAuthorize("@permissionGuard.allowed('WORKFLOW_UPDATE', null)")
     public ResponseEntity<ApiResponseWrapper<Void>> replaceSteps(@PathVariable String id,@RequestBody List<CoreWorkflowService.StepInput> input) {
         core.replaceSteps(id,input); return ok(null);
+    }
+    /** Form / document-template settings of one step; allowed on published templates too (the process structure stays frozen). */
+    @PutMapping("/templates/{id}/steps/{stepKey}/config") @PreAuthorize("@permissionGuard.allowed('WORKFLOW_UPDATE', null)")
+    public ResponseEntity<ApiResponseWrapper<Void>> stepConfig(@PathVariable String id,@PathVariable String stepKey,@RequestBody java.util.Map<String,Object> config) {
+        core.updateStepConfig(id,stepKey,jsonMapper.writeValueAsString(config)); return ok(null);
     }
     @PostMapping("/templates/{id}/publish") @PreAuthorize("@permissionGuard.allowed('WORKFLOW_APPROVE', null)")
     public ResponseEntity<ApiResponseWrapper<String>> publish(@PathVariable String id) { return ok(core.publish(id)); }

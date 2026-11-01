@@ -81,6 +81,7 @@ public class ThesisController {
             @RequestParam(required = false) String studentId,
             @RequestParam(required = false) String lecturerId,
             @RequestParam(required = false) String status,
+            @RequestParam(required = false) String stage,
             @RequestParam(required = false) String phaseId,
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "10") int size,
@@ -89,7 +90,7 @@ public class ThesisController {
         var actor=currentUserService.getCurrentUser().orElseThrow();
         if ("STUDENT".equals(actor.getUserType())) studentId=actor.getId();
         else if ("LECTURER".equals(actor.getUserType()) && !actorHasFacultyRole(actor.getId(),phaseId)) lecturerId=actor.getId();
-        return ok(thesisService.search(keyword, studentId, lecturerId, status, phaseId,
+        return ok(thesisService.search(keyword, studentId, lecturerId, status, stage, phaseId,
                 page, size, sortBy, direction));
     }
 
@@ -184,7 +185,7 @@ public class ThesisController {
     @GetMapping("/{id}/submissions")
     public ResponseEntity<ApiResponseWrapper<List<Map<String,Object>>>> submissions(@PathVariable String id) {
         String processId = thesisProcessService.getThesis(id).getProcessInstanceId();
-        var rows = jdbc.queryForList("SELECT s.id,s.step_key,s.content,s.explanation,s.signature,s.signature2,s.attachment_url,s.submitted_at,s.submitted_by AS submitted_by_id,u.full_name AS submitted_by FROM thesis_submissions s JOIN users u ON u.id=s.submitted_by WHERE s.thesis_id=? ORDER BY s.submitted_at",id);
+        var rows = jdbc.queryForList("SELECT s.id,s.step_key,s.content,s.explanation,s.signature,s.signature2,s.attachment_url,CAST(s.form_data AS text) AS form_data,(SELECT CAST(ws.config AS text) FROM workflow_steps ws JOIN workflow_templates wt ON wt.id=ws.template_id WHERE wt.process_definition_id=(SELECT proc_def_id_ FROM act_hi_procinst WHERE id_=?) AND ws.step_key=s.step_key) AS form_config,s.submitted_at,s.submitted_by AS submitted_by_id,u.full_name AS submitted_by FROM thesis_submissions s JOIN users u ON u.id=s.submitted_by WHERE s.thesis_id=? ORDER BY s.submitted_at",processId,id);
         rows.forEach(row -> row.put("step_name", presentation.stepLabel(processId, (String)row.get("step_key"))));
         return ok(rows);
     }

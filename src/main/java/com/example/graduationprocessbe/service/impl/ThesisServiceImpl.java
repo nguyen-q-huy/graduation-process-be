@@ -52,9 +52,18 @@ public class ThesisServiceImpl implements ThesisService {
     private final com.example.graduationprocessbe.service.CurrentUserService currentUser;
     private final org.springframework.jdbc.core.JdbcTemplate jdbc;
 
+    /**
+     * Ids of the theses whose current step is in the wanted stage. A step without a saved stage keeps the original rule:
+     * everything after the guidance confirmation is the thesis-doing stage. Finished theses are in that stage too.
+     */
+    private static final String STAGE_IDS_SQL = "SELECT t.id FROM theses t WHERE (CASE WHEN t.current_status='COMPLETED' THEN true WHEN t.process_instance_id IS NULL THEN false ELSE coalesce(("
+            + "SELECT coalesce(ws.phase, CASE WHEN ws.sort_order > coalesce((SELECT b.sort_order FROM workflow_steps b WHERE b.template_id=ws.template_id AND b.step_key='confirmGuidance'),2147483647) THEN 'EXECUTION' ELSE 'APPROVAL' END)='EXECUTION' "
+            + "FROM workflow_steps ws JOIN workflow_templates wt ON wt.id=ws.template_id JOIN act_hi_procinst p ON p.proc_def_id_=wt.process_definition_id "
+            + "WHERE p.id_=t.process_instance_id AND ws.step_key=t.current_status LIMIT 1),false) END) = ?";
+
     @Override
     @Transactional(readOnly = true)
-    public PageResponse<ThesisResponse> search(String keyword, String studentId, String lecturerId, String status,
+    public PageResponse<ThesisResponse> search(String keyword, String studentId, String lecturerId, String status, String stage,
                                                String phaseId, int page, int size, String sortBy, String direction) {
         Specification<Thesis> spec = (root, query, cb) -> cb.conjunction();
         if (keyword != null && !keyword.isBlank()) {
@@ -77,6 +86,11 @@ public class ThesisServiceImpl implements ThesisService {
             List<String> statuses = java.util.Arrays.stream((negate ? status.substring(1) : status).split(","))
                     .map(String::trim).filter(item -> !item.isEmpty()).toList();
             spec = spec.and((root, query, cb) -> negate ? cb.not(root.get("currentStatus").in(statuses)) : root.get("currentStatus").in(statuses));
+        }
+        if ("APPROVAL".equals(stage) || "EXECUTION".equals(stage)) {
+            // Which stage a thesis is in follows the stage of the step it is currently at (see the process settings).
+            List<String> ids = jdbc.queryForList(STAGE_IDS_SQL, String.class, "EXECUTION".equals(stage));
+            spec = spec.and((root, query, cb) -> ids.isEmpty() ? cb.disjunction() : root.get("id").in(ids));
         }
         if (phaseId != null && !phaseId.isBlank()) {
             spec = spec.and((root, query, cb) -> cb.equal(root.get("phaseId"), phaseId));

@@ -11,7 +11,7 @@ import java.util.List;
 /** CRUD, tìm kiếm, thành viên và lịch sử của đề tài. Việc start/complete task nằm ở ThesisProcessService. */
 public interface ThesisService {
 
-    PageResponse<ThesisResponse> search(String keyword, String studentId, String lecturerId, String status,
+    PageResponse<ThesisResponse> search(String keyword, String studentId, String lecturerId, String status, String stage,
                                         String phaseId, int page, int size, String sortBy, String direction);
 
     ThesisResponse update(String id, UpdateThesisRequest request);

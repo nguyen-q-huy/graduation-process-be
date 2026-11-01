@@ -1063,7 +1063,7 @@ BEGIN
       SELECT gen_random_uuid()::text,'core-template-v2',v.step_key,v.label,v.sort_order,v.kind,v.assignee_role,v.due_days,v.next_key,v.reject_key
       FROM (VALUES
         ('submitProposal','Sinh viên nộp đề cương',1,'SUBMIT','STUDENT',NULL::integer,NULL::varchar,NULL::varchar),
-        ('reviewProposal','Khoa kiểm tra và phản hồi đề cương',2,'REVIEW','FACULTY_STAFF',5,'reviseProposal'::varchar,'reviseProposal'),
+        ('reviewProposal','Khoa kiểm tra và phản hồi đề cương',2,'REVIEW','FACULTY_STAFF',5,'advisorSignature'::varchar,'reviseProposal'),
         ('reviseProposal','Sinh viên hoàn thiện đề cương theo phản hồi',3,'SUBMIT','STUDENT',NULL::integer,NULL::varchar,NULL::varchar),
         ('advisorSignature','Giảng viên xác nhận đề cương',4,'REVIEW','LECTURER',5,NULL::varchar,'reviseProposal'),
         ('submitSignedProposal','Sinh viên nộp đề cương đã xác nhận',5,'SUBMIT','STUDENT',NULL::integer,NULL::varchar,NULL::varchar),
@@ -3093,3 +3093,119 @@ CREATE TABLE IF NOT EXISTS document_pdf_cache (
  pdf bytea NOT NULL,
  created_at timestamptz NOT NULL DEFAULT now()
 );
+
+-- Optional step module (SUBMIT_FILE, REVIEW_FEEDBACK, REVIEW_APPROVAL). NULL keeps the original behaviour of a step.
+DO $step_module_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261101,1);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='step-module-v1') THEN RETURN; END IF;
+    ALTER TABLE workflow_steps ADD COLUMN IF NOT EXISTS module_type varchar(30);
+    INSERT INTO app_seed_versions(version) VALUES('step-module-v1');
+END $step_module_v1$;
+
+-- Per-step form / document-template settings; editable even after a template is published.
+DO $step_config_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261101,2);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='step-config-v1') THEN RETURN; END IF;
+    ALTER TABLE workflow_steps ADD COLUMN IF NOT EXISTS config jsonb;
+    INSERT INTO app_seed_versions(version) VALUES('step-config-v1');
+END $step_config_v1$;
+
+-- Optional stage of a step (APPROVAL = proposal approval, EXECUTION = doing the thesis). NULL keeps the original behaviour.
+DO $step_phase_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261101,3);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='step-phase-v1') THEN RETURN; END IF;
+    ALTER TABLE workflow_steps ADD COLUMN IF NOT EXISTS phase varchar(20);
+    INSERT INTO app_seed_versions(version) VALUES('step-phase-v1');
+END $step_phase_v1$;
+
+-- Fill in the settings the built-in steps already follow (input fields with the tags their Word templates use, upload,
+-- signatures, templates). Only steps that have no settings of their own yet are touched.
+DO $step_config_defaults_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261101,4);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='step-config-defaults-v1') THEN RETURN; END IF;
+    UPDATE workflow_steps ws SET config=CAST(v.cfg AS jsonb)
+    FROM (VALUES
+        ('advisorFinalReview', $cfg${"requireUpload": false, "signatureMode": "NONE", "documents": [], "fields": [{"label": "Nhận xét", "tag": "comment", "type": "textarea", "required": false}]}$cfg$),
+        ('advisorSignature', $cfg${"requireUpload": false, "signatureMode": "ACTOR", "documents": [{"code": "DECUONG"}], "fields": [{"label": "Nhận xét", "tag": "comment", "type": "textarea", "required": false}]}$cfg$),
+        ('confirmGuidance', $cfg${"requireUpload": false, "signatureMode": "NONE", "documents": [], "fields": [{"label": "Nhận xét", "tag": "comment", "type": "textarea", "required": false}]}$cfg$),
+        ('councilAccept', $cfg${"requireUpload": false, "signatureMode": "NONE", "documents": [], "fields": [{"label": "Nhận xét", "tag": "comment", "type": "textarea", "required": false}]}$cfg$),
+        ('facultyFinalApproval', $cfg${"requireUpload": false, "signatureMode": "NONE", "documents": [{"code": "DECUONG"}], "fields": [{"label": "Nhận xét", "tag": "comment", "type": "textarea", "required": false}]}$cfg$),
+        ('finalReport', $cfg${"requireUpload": true, "signatureMode": "NONE", "documents": [], "fields": [{"label": "Ghi chú gửi giảng viên", "tag": "note", "type": "textarea", "required": false}]}$cfg$),
+        ('midtermReport', $cfg${"requireUpload": true, "signatureMode": "NONE", "documents": [], "fields": [{"label": "Ghi chú gửi giảng viên", "tag": "note", "type": "textarea", "required": false}]}$cfg$),
+        ('reviewMidterm', $cfg${"requireUpload": false, "signatureMode": "NONE", "documents": [], "fields": [{"label": "Nhận xét", "tag": "comment", "type": "textarea", "required": false}]}$cfg$),
+        ('reviewProposal', $cfg${"requireUpload": false, "signatureMode": "NONE", "documents": [{"code": "DECUONG"}], "fields": [{"label": "Nhận xét", "tag": "comment", "type": "textarea", "required": false}]}$cfg$),
+        ('reviseProposal', $cfg${"requireUpload": false, "signatureMode": "NONE", "documents": [{"code": "DECUONG"}, {"code": "GIAITRINH_1", "students": 1}, {"code": "GIAITRINH_2", "students": 2}], "fields": [{"label": "Nội dung đề cương", "tag": "content", "type": "richtext", "required": true}, {"label": "Bảng giải trình chỉnh sửa", "tag": "rows", "type": "table", "required": true, "columns": [{"label": "Nội dung HĐ yêu cầu chỉnh sửa", "tag": "request"}, {"label": "Nội dung đã chỉnh sửa", "tag": "revised"}, {"label": "Lý do không chỉnh sửa", "tag": "reason"}]}]}$cfg$),
+        ('scheduleDefense', $cfg${"requireUpload": false, "signatureMode": "NONE", "documents": [], "fields": [{"label": "Thời gian bảo vệ", "tag": "defense_at", "type": "date", "required": true}, {"label": "Phòng", "tag": "room", "type": "text", "required": true}, {"label": "Tên Hội đồng", "tag": "council_name", "type": "text", "required": true}, {"label": "Ghi chú", "tag": "notes", "type": "textarea", "required": false}]}$cfg$),
+        ('submitCouncil', $cfg${"requireUpload": true, "signatureMode": "NONE", "documents": [], "fields": [{"label": "Ghi chú gửi Hội đồng", "tag": "note", "type": "textarea", "required": false}]}$cfg$),
+        ('submitProposal', $cfg${"requireUpload": false, "signatureMode": "NONE", "documents": [{"code": "DECUONG"}], "fields": [{"label": "Tên đề tài (tiếng Việt)", "tag": "title", "type": "text", "required": true}, {"label": "Tên đề tài (tiếng Anh)", "tag": "title_en", "type": "text", "required": true}, {"label": "Giảng viên hướng dẫn", "tag": "supervisor", "type": "select", "required": true}, {"label": "Sinh viên cùng nhóm", "tag": "student2", "type": "select", "required": false}, {"label": "Nội dung đề cương", "tag": "content", "type": "richtext", "required": true}]}$cfg$),
+        ('submitSignedProposal', $cfg${"requireUpload": false, "signatureMode": "EACH_STUDENT", "documents": [{"code": "DECUONG"}, {"code": "GIAITRINH_1", "students": 1}, {"code": "GIAITRINH_2", "students": 2}], "fields": []}$cfg$)
+    ) AS v(step_key,cfg)
+    WHERE ws.step_key=v.step_key AND ws.config IS NULL;
+    INSERT INTO app_seed_versions(version) VALUES('step-config-defaults-v1');
+END $step_config_defaults_v1$;
+
+-- The proposal form is filled in over two pages (registration info, then the proposal content).
+DO $step_pages_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261101,5);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='step-pages-v1') THEN RETURN; END IF;
+    UPDATE workflow_steps ws SET config = jsonb_set(
+        ws.config || jsonb_build_object('pages', jsonb_build_array('Thông tin đăng ký','Nội dung đề cương')),
+        '{fields}',
+        (SELECT coalesce(jsonb_agg(f || jsonb_build_object('page', CASE WHEN f->>'tag'='content' THEN 2 ELSE 1 END) ORDER BY ord), '[]'::jsonb)
+           FROM jsonb_array_elements(ws.config->'fields') WITH ORDINALITY AS t(f,ord)))
+    WHERE ws.step_key='submitProposal' AND ws.config IS NOT NULL AND ws.config->'pages' IS NULL
+      AND jsonb_typeof(ws.config->'fields')='array'
+      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(ws.config->'fields') x WHERE x->>'tag' IS NULL);
+    INSERT INTO app_seed_versions(version) VALUES('step-pages-v1');
+END $step_pages_v1$;
+
+-- Answers to a step's form fields (tag -> value) next to the usual content/attachment of a submission.
+DO $submission_form_data_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261101,6);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='submission-form-data-v1') THEN RETURN; END IF;
+    ALTER TABLE thesis_submissions ADD COLUMN IF NOT EXISTS form_data jsonb;
+    INSERT INTO app_seed_versions(version) VALUES('submission-form-data-v1');
+END $submission_form_data_v1$;
+
+-- The supervisor and partner fields of the proposal form are select fields fed by the round's lecturers / students.
+DO $step_field_sources_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261101,7);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='step-field-sources-v1') THEN RETURN; END IF;
+    UPDATE workflow_steps ws SET config = jsonb_set(ws.config,'{fields}',
+        (SELECT jsonb_agg(CASE WHEN f->>'tag'='supervisor' THEN f || '{"source":"LECTURERS"}'::jsonb
+                               WHEN f->>'tag'='student2' THEN f || '{"source":"STUDENTS"}'::jsonb ELSE f END ORDER BY ord)
+           FROM jsonb_array_elements(ws.config->'fields') WITH ORDINALITY AS t(f,ord)))
+    WHERE ws.step_key='submitProposal' AND ws.config IS NOT NULL AND jsonb_typeof(ws.config->'fields')='array'
+      AND jsonb_array_length(ws.config->'fields')>0;
+    INSERT INTO app_seed_versions(version) VALUES('step-field-sources-v1');
+END $step_field_sources_v1$;
+
+-- The proposal text is optional when registering (the settings decide whether the student has to fill it in).
+DO $step_content_optional_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261101,8);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='step-content-optional-v1') THEN RETURN; END IF;
+    UPDATE workflow_steps ws SET config = jsonb_set(ws.config,'{fields}',
+        (SELECT jsonb_agg(CASE WHEN f->>'tag'='content' THEN f || '{"required":false}'::jsonb ELSE f END ORDER BY ord)
+           FROM jsonb_array_elements(ws.config->'fields') WITH ORDINALITY AS t(f,ord)))
+    WHERE ws.step_key='submitProposal' AND ws.config IS NOT NULL AND jsonb_typeof(ws.config->'fields')='array'
+      AND jsonb_array_length(ws.config->'fields')>0;
+    INSERT INTO app_seed_versions(version) VALUES('step-content-optional-v1');
+END $step_content_optional_v1$;
+
+-- A document template can be defined (code, name) before its Word file is uploaded.
+DO $document_template_optional_file_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261101,9);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='document-template-optional-file-v1') THEN RETURN; END IF;
+    ALTER TABLE document_templates ALTER COLUMN file_name DROP NOT NULL;
+    ALTER TABLE document_templates ALTER COLUMN content DROP NOT NULL;
+    INSERT INTO app_seed_versions(version) VALUES('document-template-optional-file-v1');
+END $document_template_optional_file_v1$;

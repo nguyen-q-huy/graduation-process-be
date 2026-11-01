@@ -52,6 +52,7 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
     private final com.example.graduationprocessbe.service.PermissionGuard permissionGuard;
     private final WorkflowPresentationService presentation;
     private final NotificationService notifications;
+    private final tools.jackson.databind.json.JsonMapper jsonMapper;
 
     private static final ZoneId VN = ZoneId.of("Asia/Ho_Chi_Minh");
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
@@ -63,8 +64,6 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         User actor=currentUserService.getCurrentUser().orElseThrow(() -> new AccessDeniedException("Cần đăng nhập"));
         if (!"STUDENT".equals(actor.getUserType()) || !actor.getId().equals(request.getStudentId()))
             throw new AccessDeniedException("Chỉ sinh viên được đăng ký đề tài của mình");
-        if (request.getProposalContent()==null || request.getProposalContent().isBlank())
-            throw new IllegalArgumentException("Cần nội dung hoặc liên kết đề cương");
         User student = findUser(request.getStudentId());
         User lecturer = findUser(request.getLecturerId());
         if (!"LECTURER".equals(lecturer.getUserType())) throw new IllegalArgumentException("GVHD phải là giảng viên");
@@ -93,13 +92,14 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
             if (partnerExisting!=null && partnerExisting>0) throw new IllegalArgumentException("Sinh viên cùng nhóm đã có đề tài trong đợt");
         }
 
+        String proposalText = request.getProposalContent()==null || request.getProposalContent().isBlank() ? "<p></p>" : request.getProposalContent().trim();
         Thesis thesis = new Thesis();
         thesis.setTitle(request.getTitle());
         thesis.setTitleEn(request.getTitleEn().trim());
         thesis.setStudent(student);
         thesis.setLecturer(lecturer);
         thesis.setPhaseId(request.getPhaseId());
-        thesis.setDescription(request.getProposalContent().trim());
+        thesis.setDescription(proposalText);
         thesis = thesisRepository.saveAndFlush(thesis);
         jdbc.update("INSERT INTO members(thesis_id,user_id,thesis_round_id) VALUES(?,?,?)",thesis.getId(),student.getId(),request.getPhaseId());
         if (partner!=null) jdbc.update("INSERT INTO members(thesis_id,user_id,thesis_round_id) VALUES(?,?,?)",thesis.getId(),partner.getId(),request.getPhaseId());
@@ -118,8 +118,8 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         if (first==null || !"submitProposal".equals(first.getTaskDefinitionKey()))
             throw new IllegalArgumentException("Quy trình phải bắt đầu bằng bước nộp đề cương");
         jdbc.update("INSERT INTO thesis_submissions(id,thesis_id,step_key,submitted_by,content) VALUES(?,?,?,?,?)",
-                UUID.randomUUID().toString(),thesis.getId(),"submitProposal",student.getId(),request.getProposalContent().trim());
-        taskService.complete(first.getId(),Map.of("content",request.getProposalContent().trim()));
+                UUID.randomUUID().toString(),thesis.getId(),"submitProposal",student.getId(),proposalText);
+        taskService.complete(first.getId(),Map.of("content",proposalText));
         refreshStatus(thesis);
         thesis=thesisRepository.saveAndFlush(thesis);
         enqueueNextTask(thesis);
@@ -353,7 +353,7 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
                         "Thesis not found for process instance: " + task.getProcessInstanceId()));
         permissionGuard.require("TASKS_UPDATE",thesis.getPhaseId());
         Map<String,Object> vars=new HashMap<>();
-        if (variables!=null) for (String key:List.of("content","attachmentUrl","title","titleEn","explanation","signature","approved","comment","defenseAt","room","councilName","notes")) {
+        if (variables!=null) for (String key:List.of("content","attachmentUrl","title","titleEn","explanation","signature","approved","comment","defenseAt","room","councilName","notes","formData")) {
             if (variables.containsKey(key)) vars.put(key,variables.get(key));
         }
         List<Map<String,Object>> step=jdbc.queryForList(    "SELECT ws.kind FROM workflow_steps ws JOIN workflow_templates wt ON wt.id=ws.template_id WHERE wt.process_definition_id=? AND ws.step_key=?",task.getProcessDefinitionId(),task.getTaskDefinitionKey());
@@ -390,8 +390,33 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
                     secondSignature=signers.size()>1 ? proposalSignatureOf(thesis.getId(),signers.get(1)) : null;
                 }
                 boolean proposalStep=List.of("submitProposal","reviseProposal","submitSignedProposal").contains(task.getTaskDefinitionKey());
-                if (!proposalStep && !(vars.get("attachmentUrl") instanceof String file && !file.isBlank()))
+                // Settings of the step (form fields, upload, signature) decide what a custom or report step needs; the proposal
+                // steps keep their own screens and rules.
+                tools.jackson.databind.JsonNode settings=stepSettings(task);
+                boolean needUpload=!proposalStep && (settings==null || !settings.has("requireUpload") || settings.path("requireUpload").asBoolean(false));
+                if (needUpload && !(vars.get("attachmentUrl") instanceof String file && !file.isBlank()))
                     throw new IllegalArgumentException("Cần đính kèm file PDF báo cáo");
+                String formDataJson=null;
+                if (!proposalStep) {
+                    Object formData=vars.get("formData");
+                    Map<?,?> submitted=formData instanceof Map<?,?> m ? m : Map.of();
+                    if (settings!=null && settings.path("fields").isArray()) for (tools.jackson.databind.JsonNode field:settings.path("fields")) {
+                        String tag=field.path("tag").asString("");
+                        if (!field.path("required").asBoolean(false) || tag.isBlank() || "file".equals(field.path("type").asString(""))) continue;
+                        Object value=submitted.get(tag);
+                        boolean empty=value==null || value instanceof String answer && answer.isBlank() || value instanceof java.util.Collection<?> answerRows && answerRows.isEmpty();
+                        if (empty) throw new IllegalArgumentException("Cần nhập: "+field.path("label").asString(tag));
+                    }
+                    if (!submitted.isEmpty()) {
+                        formDataJson=jsonMapper.writeValueAsString(submitted);
+                        if (formDataJson.length()>200_000) throw new IllegalArgumentException("Dữ liệu biểu mẫu quá lớn");
+                    }
+                    String signatureMode=settings==null ? "NONE" : settings.path("signatureMode").asString("NONE");
+                    if (!"NONE".equals(signatureMode)) {
+                        if (!(studentSignature instanceof String drawnSignature && drawnSignature.startsWith("data:image/png;base64,") && drawnSignature.length()<=400_000))
+                            throw new IllegalArgumentException("Cần ký xác nhận trước khi nộp");
+                    }
+                }
                 if (vars.get("attachmentUrl") instanceof String url && url.startsWith("/api/theses/")
                         && !url.startsWith("/api/theses/"+thesis.getId()+"/attachments/"))
                     throw new IllegalArgumentException("File đính kèm không thuộc đề tài này");
@@ -401,8 +426,9 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
                         "SELECT EXISTS(SELECT 1 FROM thesis_feedback WHERE thesis_id=? AND approved=false AND step_key IN ('reviewProposal','facultyFinalApproval','advisorSignature'))",
                         Boolean.class,thesis.getId()));
                 if (revision && (!(explanation instanceof String why) || why.isBlank())) throw new IllegalArgumentException("Cần giải trình nội dung đã chỉnh sửa");
-                jdbc.update("INSERT INTO thesis_submissions(id,thesis_id,step_key,submitted_by,content,attachment_url,explanation,signature,signature2) VALUES(?,?,?,?,?,?,?,?,?)",
-                    UUID.randomUUID().toString(),thesis.getId(),task.getTaskDefinitionKey(),actor.getId(),content,vars.get("attachmentUrl"),explanation instanceof String reason && !reason.isBlank() ? reason : null,signedStep ? studentSignature : null,signedStep && groupStudentIds(task).size()>=2 ? secondSignature : null);
+                boolean keepSignature=signedStep || !proposalStep && settings!=null && !"NONE".equals(settings.path("signatureMode").asString("NONE"));
+                jdbc.update("INSERT INTO thesis_submissions(id,thesis_id,step_key,submitted_by,content,attachment_url,explanation,signature,signature2,form_data) VALUES(?,?,?,?,?,?,?,?,?,CAST(? AS jsonb))",
+                    UUID.randomUUID().toString(),thesis.getId(),task.getTaskDefinitionKey(),actor.getId(),content,vars.get("attachmentUrl"),explanation instanceof String reason && !reason.isBlank() ? reason : null,keepSignature ? studentSignature : null,signedStep && groupStudentIds(task).size()>=2 ? secondSignature : null,formDataJson);
                 // The title may be narrowed while the proposal is being revised (e.g. when it was too broad).
                 if (vars.get("title") instanceof String newTitle && List.of("submitProposal","reviseProposal","submitSignedProposal").contains(task.getTaskDefinitionKey())) {
                     String trimmed=newTitle.trim();
@@ -431,12 +457,15 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
                 if (!approved && comment.isBlank()) throw new IllegalArgumentException("Cần ghi rõ nội dung yêu cầu sửa");
                 // The supervising lecturer signs when confirming a proposal: a PNG drawn on the signature pad.
                 Object drawn=vars.get("signature");
-                boolean needsSignature="advisorSignature".equals(task.getTaskDefinitionKey()) && approved;
+                tools.jackson.databind.JsonNode reviewSettings=stepSettings(task);
+                boolean proposalApproval="advisorSignature".equals(task.getTaskDefinitionKey()) && approved;
+                boolean needsSignature=reviewSettings!=null && reviewSettings.has("signatureMode")
+                        ? approved && !"NONE".equals(reviewSettings.path("signatureMode").asString("NONE")) : proposalApproval;
                 if (needsSignature && !(drawn instanceof String img && img.startsWith("data:image/png;base64,")))
                     throw new IllegalArgumentException("Cần chữ ký xác nhận của giảng viên");
                 if (drawn instanceof String img && img.length()>400_000) throw new IllegalArgumentException("Chữ ký quá lớn");
                 // A new approval of the text means the students have to sign it again.
-                if (needsSignature) jdbc.update("DELETE FROM thesis_proposal_signatures WHERE thesis_id=?",thesis.getId());
+                if (proposalApproval) jdbc.update("DELETE FROM thesis_proposal_signatures WHERE thesis_id=?",thesis.getId());
                 jdbc.update("INSERT INTO thesis_feedback(id,thesis_id,step_key,reviewer_id,approved,comment,signature) VALUES(?,?,?,?,?,?,?)",
                     UUID.randomUUID().toString(),thesis.getId(),task.getTaskDefinitionKey(),actor.getId(),approved,comment,needsSignature ? drawn : null);
             }
@@ -470,6 +499,10 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         auditVars.computeIfPresent("signature", (ignoredKey, ignoredValue) -> "[chữ ký]");
         Map<String,Object> processVars=new HashMap<>(vars);
         processVars.remove("title"); processVars.remove("titleEn"); processVars.remove("previousTitle"); processVars.remove("explanation"); processVars.remove("signature");
+        // Step setting "no approval needed": whatever the reviewer answered, the flow takes the "continue" branch.
+        // Read from the step config at run time, so it can be changed even after the template is published.
+        if (!step.isEmpty() && "REVIEW".equals(step.getFirst().get("kind")) && "FEEDBACK".equals(reviewMode(task)))
+            processVars.put("approved", true);
         taskService.complete(taskId, processVars);
         // Routing belongs to the published definition selected for this round.
 
@@ -483,6 +516,20 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         auditLogService.record(task.getProcessInstanceId(), currentUserService.getCurrentUser().orElse(null),
                 "COMPLETE_TASK", task.getTaskDefinitionKey(), auditVars);
         return response(thesis);
+    }
+
+    /** The step's saved settings (form fields, upload, signature...), or null when it has none. */
+    private tools.jackson.databind.JsonNode stepSettings(Task task) {
+        List<String> rows=jdbc.queryForList("SELECT CAST(ws.config AS text) FROM workflow_steps ws JOIN workflow_templates wt ON wt.id=ws.template_id WHERE wt.process_definition_id=? AND ws.step_key=? AND ws.config IS NOT NULL",
+                String.class,task.getProcessDefinitionId(),task.getTaskDefinitionKey());
+        if (rows.isEmpty()) return null;
+        try { return jsonMapper.readTree(rows.getFirst()); } catch (RuntimeException e) { return null; }
+    }
+
+    private String reviewMode(Task task) {
+        List<String> modes=jdbc.queryForList("SELECT ws.config->>'reviewMode' FROM workflow_steps ws JOIN workflow_templates wt ON wt.id=ws.template_id WHERE wt.process_definition_id=? AND ws.step_key=?",
+                String.class,task.getProcessDefinitionId(),task.getTaskDefinitionKey());
+        return modes.isEmpty() ? null : modes.getFirst();
     }
 
     /** Notifies whoever must act on the next step: the assignee, the candidate users, or everyone holding the step's role. */
@@ -656,6 +703,11 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
                         : task.getCreateTime().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
         List<String> kinds=jdbc.queryForList("SELECT ws.kind FROM workflow_steps ws JOIN workflow_templates wt ON wt.id=ws.template_id WHERE wt.process_definition_id=? AND ws.step_key=?",String.class,task.getProcessDefinitionId(),task.getTaskDefinitionKey());
         if (!kinds.isEmpty()) response.setKind(kinds.getFirst());
+        var settings=stepSettings(task);
+        if (settings!=null) response.setStepConfig(settings.toString());
+        List<String> phases=jdbc.queryForList("SELECT coalesce(ws.phase, CASE WHEN ws.sort_order > coalesce((SELECT b.sort_order FROM workflow_steps b WHERE b.template_id=ws.template_id AND b.step_key='confirmGuidance'),2147483647) THEN 'EXECUTION' ELSE 'APPROVAL' END) "
+                + "FROM workflow_steps ws JOIN workflow_templates wt ON wt.id=ws.template_id WHERE wt.process_definition_id=? AND ws.step_key=?",String.class,task.getProcessDefinitionId(),task.getTaskDefinitionKey());
+        if (!phases.isEmpty()) response.setPhase(phases.getFirst());
         if (task.getDueDate()!=null) response.setDueDate(task.getDueDate().toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime());
         var cases = jdbc.queryForList("SELECT t.id,t.title,coalesce((SELECT string_agg(u.full_name, ', ' ORDER BY (u.id=t.student_id) DESC, u.full_name) FROM members m JOIN users u ON u.id=m.user_id WHERE m.thesis_id=t.id),s.full_name) AS student_name FROM theses t JOIN users s ON s.id=t.student_id WHERE t.process_instance_id=?", task.getProcessInstanceId());
         if (!cases.isEmpty()) {
