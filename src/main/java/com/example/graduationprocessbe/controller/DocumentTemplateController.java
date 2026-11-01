@@ -10,6 +10,7 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -56,9 +57,11 @@ public class DocumentTemplateController {
     @GetMapping
     public ResponseEntity<ApiResponseWrapper<List<Map<String, Object>>>> list() {
         ensureDefaults();
-        return ok(jdbc.queryForList(
+        List<Map<String, Object>> rows = jdbc.queryForList(
                 "SELECT t.code,t.name,t.file_name,t.is_default,t.updated_at,u.full_name AS updated_by "
-                        + "FROM document_templates t LEFT JOIN users u ON u.id=t.updated_by ORDER BY t.code"));
+                        + "FROM document_templates t LEFT JOIN users u ON u.id=t.updated_by ORDER BY t.code");
+        rows.forEach(row -> row.put("built_in", DEFAULTS.containsKey((String) row.get("code"))));
+        return ok(rows);
     }
 
     @GetMapping("/{code}/file")
@@ -67,6 +70,7 @@ public class DocumentTemplateController {
         List<Map<String, Object>> rows = jdbc.queryForList("SELECT file_name,content FROM document_templates WHERE code=?", code);
         if (rows.isEmpty()) return ResponseEntity.notFound().build();
         String fileName = (String) rows.getFirst().get("file_name");
+        if (fileName == null || rows.getFirst().get("content") == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok()
                 .contentType(DOCX)
                 .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(fileName, StandardCharsets.UTF_8).build().toString())
@@ -77,7 +81,8 @@ public class DocumentTemplateController {
     @PreAuthorize("hasRole('ADMIN')")
     public ResponseEntity<ApiResponseWrapper<Map<String, Object>>> upload(@PathVariable String code, @RequestParam("file") MultipartFile file) throws IOException {
         ensureDefaults();
-        requireKnown(code);
+        Integer exists = jdbc.queryForObject("SELECT count(*) FROM document_templates WHERE code=?", Integer.class, code);
+        if (exists == null || exists == 0) throw new IllegalArgumentException("Mẫu văn bản không tồn tại");
         String original = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().trim();
         if (!original.toLowerCase().endsWith(".docx")) throw new IllegalArgumentException("Chỉ nhận tệp Word (.docx)");
         if (file.isEmpty() || file.getSize() > MAX_BYTES) throw new IllegalArgumentException("Tệp trống hoặc lớn hơn 5MB");
@@ -86,6 +91,44 @@ public class DocumentTemplateController {
         jdbc.update("UPDATE document_templates SET file_name=?,content=?,is_default=false,updated_by=?,updated_at=now() WHERE code=?",
                 original, bytes, currentUserId(), code);
         return ok(Map.of("code", code, "fileName", original));
+    }
+
+    /** Adds a new template next to the bundled ones; its tags come from the form settings of the steps that use it. */
+    @PostMapping
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Map<String, Object>>> create(@RequestParam String code, @RequestParam String name, @RequestParam(value = "file", required = false) MultipartFile file) throws IOException {
+        ensureDefaults();
+        String key = code == null ? "" : code.trim().toUpperCase();
+        if (!key.matches("[A-Z][A-Z0-9_]{1,49}")) throw new IllegalArgumentException("Mã mẫu gồm chữ không dấu, số và dấu gạch dưới, bắt đầu bằng chữ (2-50 ký tự)");
+        String title = name == null ? "" : name.trim();
+        if (title.isEmpty() || title.length() > 150) throw new IllegalArgumentException("Cần tên mẫu (tối đa 150 ký tự)");
+        Integer existing = jdbc.queryForObject("SELECT count(*) FROM document_templates WHERE code=?", Integer.class, key);
+        if (existing != null && existing > 0) throw new IllegalArgumentException("Mã mẫu đã tồn tại");
+        // The Word file can come later: a template may be defined first (code and name) and filled in afterwards.
+        String original = null;
+        byte[] bytes = null;
+        if (file != null && !file.isEmpty()) {
+            original = file.getOriginalFilename() == null ? "" : file.getOriginalFilename().trim();
+            if (!original.toLowerCase().endsWith(".docx")) throw new IllegalArgumentException("Chỉ nhận tệp Word (.docx)");
+            if (file.getSize() > MAX_BYTES) throw new IllegalArgumentException("Tệp lớn hơn 5MB");
+            bytes = file.getBytes();
+            requireWordDocument(bytes);
+        }
+        jdbc.update("INSERT INTO document_templates(code,name,file_name,content,is_default,updated_by,updated_at) VALUES(?,?,?,?,false,?,now())",
+                key, title, original, bytes, currentUserId());
+        return ok(Map.of("code", key, "hasFile", bytes != null));
+    }
+
+    /** Only templates added by an admin can be deleted, and not while a step still uses one. */
+    @DeleteMapping("/{code}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponseWrapper<Void>> delete(@PathVariable String code) {
+        if (DEFAULTS.containsKey(code)) throw new IllegalArgumentException("Không xóa được mẫu có sẵn của hệ thống");
+        Integer used = jdbc.queryForObject("SELECT count(*) FROM workflow_steps WHERE config @> CAST(? AS jsonb)", Integer.class,
+                "{\"documents\":[{\"code\":\"" + code.replace("\\", "").replace("\"", "") + "\"}]}");
+        if (used != null && used > 0) throw new IllegalArgumentException("Mẫu đang được dùng ở một bước của quy trình, hãy gỡ khỏi bước đó trước khi xóa");
+        if (jdbc.update("DELETE FROM document_templates WHERE code=?", code) == 0) throw new IllegalArgumentException("Mẫu văn bản không tồn tại");
+        return ok(null);
     }
 
     @PostMapping("/{code}/reset")

@@ -224,10 +224,25 @@ public class CoreWorkflowService {
         return jdbc.queryForList("SELECT * FROM workflow_templates ORDER BY created_at DESC");
     }
     public List<Map<String,Object>> steps(String templateId) {
-        return jdbc.queryForList("SELECT * FROM workflow_steps WHERE template_id=? ORDER BY sort_order",templateId);
+        var rows = jdbc.queryForList("SELECT * FROM workflow_steps WHERE template_id=? ORDER BY sort_order",templateId);
+        // jsonb comes back as a driver object; hand the client the plain JSON text instead.
+        for (var row : rows) if (row.get("config") != null) row.put("config", String.valueOf(row.get("config")));
+        return rows;
+    }
+    /**
+     * Form / document-template settings of a step. Unlike the step structure (kind, order, branches), which is frozen once a
+     * template is published, these may be changed at any time: they never touch the deployed BPMN.
+     */
+    @Transactional
+    public void updateStepConfig(String templateId, String stepKey, String configJson) {
+        if (configJson == null || configJson.length() > 65536) throw new IllegalArgumentException("Cấu hình không hợp lệ hoặc quá lớn");
+        if (jdbc.queryForList("SELECT id FROM workflow_templates WHERE id=? FOR UPDATE",templateId).isEmpty())
+            throw new IllegalArgumentException("Không tìm thấy quy trình");
+        if (jdbc.update("UPDATE workflow_steps SET config=CAST(? AS jsonb) WHERE template_id=? AND step_key=?",configJson,templateId,stepKey)==0)
+            throw new IllegalArgumentException("Không tìm thấy bước: "+stepKey);
     }
     public List<Map<String,Object>> roundSteps(String roundId) {
-        return jdbc.queryForList("SELECT ws.step_key,ws.label,ws.sort_order,ws.kind,ws.assignee_role,ws.due_days,ws.next_key,ws.reject_key,ws.email_enabled " +
+        return jdbc.queryForList("SELECT ws.step_key,ws.label,ws.sort_order,ws.kind,ws.assignee_role,ws.due_days,ws.next_key,ws.reject_key,ws.email_enabled,CAST(ws.config AS text) AS config " +
                 "FROM thesis_rounds r JOIN workflow_templates wt ON wt.process_definition_id=r.workflow_definition_id " +
                 "JOIN workflow_steps ws ON ws.template_id=wt.id WHERE r.id=? ORDER BY ws.sort_order",roundId);
     }
@@ -240,7 +255,7 @@ public class CoreWorkflowService {
             throw new IllegalArgumentException("Không tìm thấy quy trình để sao chép");
         int version=jdbc.queryForObject("SELECT coalesce(max(version),0)+1 FROM workflow_templates",Integer.class);
         jdbc.update("INSERT INTO workflow_templates(id,name,version,status) VALUES(?,?,?,'DRAFT')",id,name,version);
-        if (sourceId!=null) jdbc.update("INSERT INTO workflow_steps(id,template_id,step_key,label,sort_order,kind,assignee_role,due_days,next_key,reject_key,email_enabled) SELECT gen_random_uuid()::text,?,step_key,label,sort_order,kind,assignee_role,due_days,next_key,reject_key,email_enabled FROM workflow_steps WHERE template_id=?",id,sourceId);
+        if (sourceId!=null) jdbc.update("INSERT INTO workflow_steps(id,template_id,step_key,label,sort_order,kind,assignee_role,due_days,next_key,reject_key,email_enabled,module_type,config,phase) SELECT gen_random_uuid()::text,?,step_key,label,sort_order,kind,assignee_role,due_days,next_key,reject_key,email_enabled,module_type,config,phase FROM workflow_steps WHERE template_id=?",id,sourceId);
         return id;
     }
     @Transactional
@@ -264,9 +279,14 @@ public class CoreWorkflowService {
                 && (!"SUBMIT".equals(s.kind()) || !"STUDENT".equals(s.role()))
                 || "registerThesis".equals(s.key()) && (!"TASK".equals(s.kind()) || !"STUDENT".equals(s.role()))))
             throw new IllegalArgumentException("Bước nghiệp vụ sinh viên phải giữ đúng loại và vai trò xử lý");
+        validatePhases(steps);
+        final List<StepInput> ordered = applyModules(steps);
+        var savedConfigs = new java.util.HashMap<String,String>();
+        for (var row : jdbc.queryForList("SELECT step_key,CAST(config AS text) AS config FROM workflow_steps WHERE template_id=? AND config IS NOT NULL",templateId))
+            savedConfigs.put((String)row.get("step_key"),(String)row.get("config"));
         jdbc.update("DELETE FROM workflow_steps WHERE template_id=?",templateId);
-        for (int i=0;i<steps.size();i++) {
-            StepInput s=steps.get(i);
+        for (int i=0;i<ordered.size();i++) {
+            StepInput s=ordered.get(i);
             if (!s.key().matches("[A-Za-z][A-Za-z0-9_]{1,59}") || s.label().isBlank()
                     || !List.of("SUBMIT","REVIEW","TASK").contains(s.kind())
                     || !List.of("STUDENT","LECTURER","FACULTY_STAFF","COMMITTEE").contains(s.role())
@@ -277,8 +297,10 @@ public class CoreWorkflowService {
                 throw new IllegalArgumentException("Bước duyệt cần chọn bước quay lại khi yêu cầu sửa");
             if (!"REVIEW".equals(s.kind()) && s.rejectKey()!=null && !s.rejectKey().isBlank())
                 throw new IllegalArgumentException("Chỉ bước duyệt mới có nhánh yêu cầu sửa");
-            jdbc.update("INSERT INTO workflow_steps(id,template_id,step_key,label,sort_order,kind,assignee_role,due_days,next_key,reject_key,email_enabled) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                    UUID.randomUUID().toString(),templateId,s.key(),s.label(),i+1,s.kind(),s.role(),s.dueDays(),s.nextKey(),s.rejectKey(),!Boolean.FALSE.equals(s.emailEnabled()));
+            jdbc.update("INSERT INTO workflow_steps(id,template_id,step_key,label,sort_order,kind,assignee_role,due_days,next_key,reject_key,email_enabled,module_type,phase) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    UUID.randomUUID().toString(),templateId,s.key(),s.label(),i+1,s.kind(),s.role(),s.dueDays(),s.nextKey(),s.rejectKey(),!Boolean.FALSE.equals(s.emailEnabled()),s.moduleType(),s.phase());
+            if (savedConfigs.containsKey(s.key()))
+                jdbc.update("UPDATE workflow_steps SET config=CAST(? AS jsonb) WHERE template_id=? AND step_key=?",savedConfigs.get(s.key()),templateId,s.key());
         }
     }
     @Transactional
@@ -386,5 +408,55 @@ public class CoreWorkflowService {
                 (condition==null?"":"<conditionExpression xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xsi:type=\"tFormalExpression\"><![CDATA["+condition+"]]></conditionExpression>")+"</sequenceFlow>";
     }
     private String escape(String value) { return value.replace("&","&amp;").replace("\"","&quot;").replace("<","&lt;").replace(">","&gt;"); }
-    public record StepInput(String key,String label,String kind,String role,Integer dueDays,String nextKey,String rejectKey,Boolean emailEnabled) {}
+    public record StepInput(String key,String label,String kind,String role,Integer dueDays,String nextKey,String rejectKey,Boolean emailEnabled,String moduleType,String phase) {}
+
+    /**
+     * Optional stage of each step: APPROVAL (getting the proposal approved) comes before EXECUTION (doing the thesis).
+     * Steps without a stage are left alone, so existing templates are unaffected.
+     */
+    private void validatePhases(List<StepInput> steps) {
+        boolean executionSeen = false;
+        for (StepInput s : steps) {
+            if (s.phase()==null || s.phase().isBlank()) continue;
+            if (!List.of("APPROVAL","EXECUTION").contains(s.phase())) throw new IllegalArgumentException("Giai đoạn không hợp lệ: "+s.phase());
+            if ("EXECUTION".equals(s.phase())) executionSeen = true;
+            else if (executionSeen) throw new IllegalArgumentException("Các bước duyệt đề cương phải đứng trước các bước làm đồ án");
+        }
+    }
+
+    /** Step modules (optional). A step without a module keeps the original behaviour untouched. */
+    private static final Map<String,String> MODULE_KINDS = Map.of(
+            "SUBMIT_FILE","SUBMIT",       // student uploads a PDF; a review step must follow
+            "REVIEW_FEEDBACK","REVIEW",   // any response lets the flow continue (approved or not)
+            "REVIEW_APPROVAL","REVIEW");  // only an approval lets the flow continue, otherwise back to rejectKey
+
+    /**
+     * Checks module rules and fills in what a module implies. Steps with no module are returned unchanged, so existing
+     * templates and their editing behave exactly as before.
+     */
+    private List<StepInput> applyModules(List<StepInput> steps) {
+        if (steps.stream().allMatch(s -> s.moduleType()==null || s.moduleType().isBlank())) return steps;
+        List<StepInput> result = new java.util.ArrayList<>(steps.size());
+        for (int i=0;i<steps.size();i++) {
+            StepInput s = steps.get(i);
+            String module = s.moduleType()==null || s.moduleType().isBlank() ? null : s.moduleType();
+            if (module==null) { result.add(s); continue; }
+            String kind = MODULE_KINDS.get(module);
+            if (kind==null) throw new IllegalArgumentException("Loại module không hợp lệ: "+module);
+            if (!kind.equals(s.kind())) throw new IllegalArgumentException("Module "+module+" chỉ dùng cho bước loại "+kind+": "+s.label());
+            String next = s.nextKey()!=null && !s.nextKey().isBlank() ? s.nextKey() : i+1<steps.size() ? steps.get(i+1).key() : "end";
+            if ("SUBMIT_FILE".equals(module)) {
+                StepInput following = steps.stream().filter(x -> x.key().equals(next)).findFirst().orElse(null);
+                if (following==null || !"REVIEW".equals(following.kind()))
+                    throw new IllegalArgumentException("Bước nộp \""+s.label()+"\" cần có bước duyệt liền sau");
+            }
+            // Feedback review: both outcomes continue to the same next step.
+            if ("REVIEW_FEEDBACK".equals(module) && "end".equals(next))
+                throw new IllegalArgumentException("Bước phản hồi \""+s.label()+"\" phải có bước tiếp theo");
+            result.add("REVIEW_FEEDBACK".equals(module)
+                    ? new StepInput(s.key(),s.label(),s.kind(),s.role(),s.dueDays(),s.nextKey(),next,s.emailEnabled(),module,s.phase())
+                    : s);
+        }
+        return result;
+    }
 }

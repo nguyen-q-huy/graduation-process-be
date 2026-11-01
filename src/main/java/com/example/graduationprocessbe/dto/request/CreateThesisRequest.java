@@ -28,6 +28,6 @@ public class CreateThesisRequest {
 
     private String partnerStudentId;
 
-    @NotBlank(message = "Cần nội dung hoặc liên kết đề cương")
+    /** Optional: the proposal text can be left empty at registration (an empty paragraph is stored). */
     private String proposalContent;
 }
