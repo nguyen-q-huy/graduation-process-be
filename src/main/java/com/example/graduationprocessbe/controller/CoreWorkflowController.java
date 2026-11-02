@@ -133,6 +133,26 @@ public class CoreWorkflowController {
     /** Form / document-template settings of one step; allowed on published templates too (the process structure stays frozen). */
     @PutMapping("/templates/{id}/steps/{stepKey}/config") @PreAuthorize("@permissionGuard.allowed('WORKFLOW_UPDATE', null)")
     public ResponseEntity<ApiResponseWrapper<Void>> stepConfig(@PathVariable String id,@PathVariable String stepKey,@RequestBody java.util.Map<String,Object> config) {
+        // The same tag in another step means the same variable (the later step shows and updates the earlier value), so it must be the same type.
+        if (config.get("fields") instanceof java.util.List<?> newFields) {
+            for (java.util.Map<String,Object> other : core.steps(id)) {
+                if (stepKey.equals(other.get("step_key")) || !(other.get("config") instanceof String text)) continue;
+                tools.jackson.databind.JsonNode tree = jsonMapper.readTree(text);
+                for (tools.jackson.databind.JsonNode field : tree.path("fields")) {
+                    String tag = field.path("tag").asString(""), type = field.path("type").asString("");
+                    for (Object mine : newFields)
+                        if (mine instanceof java.util.Map<?,?> m && !tag.isEmpty() && tag.equals(m.get("tag")) && !type.equals(String.valueOf(m.get("type"))))
+                            throw new IllegalArgumentException("Tag " + tag + " đã dùng ở bước \"" + other.get("label") + "\" với loại \"" + type + "\". Dùng chung tag giữa các bước thì phải cùng loại.");
+                }
+            }
+        }
+        // A field that already holds answers keeps its tag: other steps and Word templates refer to the variable by it.
+        java.util.Set<String> kept = new java.util.HashSet<>();
+        if (config.get("fields") instanceof java.util.List<?> fields)
+            for (Object field : fields) if (field instanceof java.util.Map<?,?> map && map.get("tag") instanceof String tag) kept.add(tag);
+        java.util.Set<String> locked = core.tagsWithData(id,stepKey);
+        locked.removeAll(kept);
+        if (!locked.isEmpty()) throw new IllegalArgumentException("Trường có tag "+String.join(", ",locked)+" đã có dữ liệu sinh viên nhập nên không xóa hoặc đổi tag được, chỉ đổi được nhãn");
         core.updateStepConfig(id,stepKey,jsonMapper.writeValueAsString(config)); return ok(null);
     }
     @PostMapping("/templates/{id}/publish") @PreAuthorize("@permissionGuard.allowed('WORKFLOW_APPROVE', null)")

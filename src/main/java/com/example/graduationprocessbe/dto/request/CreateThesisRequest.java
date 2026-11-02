@@ -28,6 +28,9 @@ public class CreateThesisRequest {
 
     private String partnerStudentId;
 
+    /** Answers to extra fields the first step's form defines (tag -> value). */
+    private java.util.Map<String, Object> formData;
+
     /** Optional: the proposal text can be left empty at registration (an empty paragraph is stored). */
     private String proposalContent;
 }

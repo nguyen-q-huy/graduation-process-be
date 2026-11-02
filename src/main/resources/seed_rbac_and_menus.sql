@@ -3209,3 +3209,18 @@ BEGIN
     ALTER TABLE document_templates ALTER COLUMN content DROP NOT NULL;
     INSERT INTO app_seed_versions(version) VALUES('document-template-optional-file-v1');
 END $document_template_optional_file_v1$;
+
+-- The "revise proposal" form: rename fields and the explanation guidance are part of the step settings too.
+DO $revise_step_fields_v1$
+BEGIN
+    PERFORM pg_advisory_xact_lock(20261102,1);
+    IF EXISTS(SELECT 1 FROM app_seed_versions WHERE version='revise-step-fields-v1') THEN RETURN; END IF;
+    UPDATE workflow_steps ws SET config = jsonb_set(ws.config,'{fields}',
+        '[{"label":"Tên đề tài (tiếng Việt)","tag":"title","type":"text","required":true},{"label":"Tên đề tài (tiếng Anh)","tag":"title_en","type":"text","required":true}]'::jsonb
+        || (SELECT coalesce(jsonb_agg(CASE WHEN f->>'tag'='rows' AND f->>'hint' IS NULL
+                THEN f || jsonb_build_object('hint', 'Mỗi ý Khoa yêu cầu một dòng. Ghi rõ đã chỉnh sửa gì; nếu không chỉnh sửa thì nêu lý do ở cột cuối. Bấm Thêm dòng để thêm ý.') ELSE f END ORDER BY ord),'[]'::jsonb)
+              FROM jsonb_array_elements(ws.config->'fields') WITH ORDINALITY AS t(f,ord)))
+    WHERE ws.step_key='reviseProposal' AND ws.config IS NOT NULL AND jsonb_typeof(ws.config->'fields')='array'
+      AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements(ws.config->'fields') x WHERE x->>'tag'='title');
+    INSERT INTO app_seed_versions(version) VALUES('revise-step-fields-v1');
+END $revise_step_fields_v1$;
