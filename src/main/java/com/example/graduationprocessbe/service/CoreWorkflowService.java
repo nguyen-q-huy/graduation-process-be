@@ -233,6 +233,12 @@ public class CoreWorkflowService {
      * Form / document-template settings of a step. Unlike the step structure (kind, order, branches), which is frozen once a
      * template is published, these may be changed at any time: they never touch the deployed BPMN.
      */
+    /** Tags of this step's form fields that students have already answered (so they cannot be removed or renamed any more). */
+    public java.util.Set<String> tagsWithData(String templateId, String stepKey) {
+        return new java.util.HashSet<>(jdbc.queryForList("SELECT DISTINCT jsonb_object_keys(s.form_data) FROM thesis_submissions s JOIN theses t ON t.id=s.thesis_id "
+                + "JOIN act_hi_procinst p ON p.id_=t.process_instance_id JOIN workflow_templates wt ON wt.process_definition_id=p.proc_def_id_ "
+                + "WHERE wt.id=? AND s.step_key=? AND s.form_data IS NOT NULL AND jsonb_typeof(s.form_data)='object'",String.class,templateId,stepKey));
+    }
     @Transactional
     public void updateStepConfig(String templateId, String stepKey, String configJson) {
         if (configJson == null || configJson.length() > 65536) throw new IllegalArgumentException("Cấu hình không hợp lệ hoặc quá lớn");

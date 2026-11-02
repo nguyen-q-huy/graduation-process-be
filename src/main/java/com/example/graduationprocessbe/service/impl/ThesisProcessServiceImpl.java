@@ -117,8 +117,9 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         Task first=taskService.createTaskQuery().processInstanceId(instance.getId()).singleResult();
         if (first==null || !"submitProposal".equals(first.getTaskDefinitionKey()))
             throw new IllegalArgumentException("Quy trình phải bắt đầu bằng bước nộp đề cương");
-        jdbc.update("INSERT INTO thesis_submissions(id,thesis_id,step_key,submitted_by,content) VALUES(?,?,?,?,?)",
-                UUID.randomUUID().toString(),thesis.getId(),"submitProposal",student.getId(),proposalText);
+        String registrationForm=formDataJson(startSettings(definition,"submitProposal"),request.getFormData(),true);
+        jdbc.update("INSERT INTO thesis_submissions(id,thesis_id,step_key,submitted_by,content,form_data) VALUES(?,?,?,?,?,CAST(? AS jsonb))",
+                UUID.randomUUID().toString(),thesis.getId(),"submitProposal",student.getId(),proposalText,registrationForm);
         taskService.complete(first.getId(),Map.of("content",proposalText));
         refreshStatus(thesis);
         thesis=thesisRepository.saveAndFlush(thesis);
@@ -396,21 +397,8 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
                 boolean needUpload=!proposalStep && (settings==null || !settings.has("requireUpload") || settings.path("requireUpload").asBoolean(false));
                 if (needUpload && !(vars.get("attachmentUrl") instanceof String file && !file.isBlank()))
                     throw new IllegalArgumentException("Cần đính kèm file PDF báo cáo");
-                String formDataJson=null;
+                String formDataJson=formDataJson(settings,vars.get("formData"),proposalStep);
                 if (!proposalStep) {
-                    Object formData=vars.get("formData");
-                    Map<?,?> submitted=formData instanceof Map<?,?> m ? m : Map.of();
-                    if (settings!=null && settings.path("fields").isArray()) for (tools.jackson.databind.JsonNode field:settings.path("fields")) {
-                        String tag=field.path("tag").asString("");
-                        if (!field.path("required").asBoolean(false) || tag.isBlank() || "file".equals(field.path("type").asString(""))) continue;
-                        Object value=submitted.get(tag);
-                        boolean empty=value==null || value instanceof String answer && answer.isBlank() || value instanceof java.util.Collection<?> answerRows && answerRows.isEmpty();
-                        if (empty) throw new IllegalArgumentException("Cần nhập: "+field.path("label").asString(tag));
-                    }
-                    if (!submitted.isEmpty()) {
-                        formDataJson=jsonMapper.writeValueAsString(submitted);
-                        if (formDataJson.length()>200_000) throw new IllegalArgumentException("Dữ liệu biểu mẫu quá lớn");
-                    }
                     String signatureMode=settings==null ? "NONE" : settings.path("signatureMode").asString("NONE");
                     if (!"NONE".equals(signatureMode)) {
                         if (!(studentSignature instanceof String drawnSignature && drawnSignature.startsWith("data:image/png;base64,") && drawnSignature.length()<=400_000))
@@ -516,6 +504,36 @@ public class ThesisProcessServiceImpl implements ThesisProcessService {
         auditLogService.record(task.getProcessInstanceId(), currentUserService.getCurrentUser().orElse(null),
                 "COMPLETE_TASK", task.getTaskDefinitionKey(), auditVars);
         return response(thesis);
+    }
+
+    /** Tags the proposal steps fill through their own fixed fields; the settings may list them but answers to them are not form data. */
+    private static final java.util.Set<String> PROPOSAL_FIELD_TAGS = java.util.Set.of("title","title_en","supervisor","student2","content","rows");
+
+    /**
+     * Checks the required fields of a step's form and returns the answers as JSON (null when there are none). The fixed fields of
+     * the proposal steps are skipped: they are not part of the form data.
+     */
+    private String formDataJson(tools.jackson.databind.JsonNode settings, Object formData, boolean proposalStep) {
+        Map<?,?> submitted=formData instanceof Map<?,?> m ? m : Map.of();
+        if (settings!=null && settings.path("fields").isArray()) for (tools.jackson.databind.JsonNode field:settings.path("fields")) {
+            String tag=field.path("tag").asString("");
+            if (!field.path("required").asBoolean(false) || tag.isBlank() || "file".equals(field.path("type").asString(""))) continue;
+            if (proposalStep && PROPOSAL_FIELD_TAGS.contains(tag)) continue;
+            Object value=submitted.get(tag);
+            boolean empty=value==null || value instanceof String answer && answer.isBlank() || value instanceof java.util.Collection<?> answerRows && answerRows.isEmpty();
+            if (empty) throw new IllegalArgumentException("Cần nhập: "+field.path("label").asString(tag));
+        }
+        if (submitted.isEmpty()) return null;
+        String json=jsonMapper.writeValueAsString(submitted);
+        if (json.length()>200_000) throw new IllegalArgumentException("Dữ liệu biểu mẫu quá lớn");
+        return json;
+    }
+
+    private tools.jackson.databind.JsonNode startSettings(String processDefinitionId, String stepKey) {
+        List<String> rows=jdbc.queryForList("SELECT CAST(ws.config AS text) FROM workflow_steps ws JOIN workflow_templates wt ON wt.id=ws.template_id WHERE wt.process_definition_id=? AND ws.step_key=? AND ws.config IS NOT NULL",
+                String.class,processDefinitionId,stepKey);
+        if (rows.isEmpty()) return null;
+        try { return jsonMapper.readTree(rows.getFirst()); } catch (RuntimeException e) { return null; }
     }
 
     /** The step's saved settings (form fields, upload, signature...), or null when it has none. */
